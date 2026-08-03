@@ -1,0 +1,381 @@
+{
+  "title": "Aerial Danger",
+  "config": {
+    "step": {
+      "user": {
+        "description": "Name this monitoring entry and select the Home Assistant entities whose states contain danger messages.\n\nTo create source entities from public Telegram channels, use the [Scrape integration]({scrape_url}). Example channels:\n\n- [Air Force of the Armed Forces of Ukraine]({air_force_url})\n- [War Monitor]({war_monitor_url})\n\n**Important:** Aerial Danger can make mistakes, miss messages, or detect them late. Do not use it as your only or official alert source. Always follow official alerts and instructions. During an air-raid alert, go to the nearest shelter immediately and remain there until the official all-clear. The integration is provided “as is.” The author does not guarantee data accuracy, completeness, or timeliness and is not responsible for users’ safety, decisions, or consequences arising from its use.",
+        "data": {
+          "name": "Name",
+          "sources": "Danger message sources"
+        },
+        "data_description": {
+          "name": "This name identifies the monitoring entry and its Home Assistant device.",
+          "sources": "Select one or more entities whose state contains danger message text."
+        }
+      },
+      "regions": {
+        "title": "Regions",
+        "description": "Choose the regions to monitor. Region matches are used for ballistic missiles, cruise missiles, and other fast threats approaching your location.\n\nSelect built-in regions, enter custom patterns, or use both.",
+        "data": {
+          "region_presets": "Built-in regions",
+          "region_patterns": "Custom region patterns (YAML list)"
+        },
+        "data_description": {
+          "region_presets": "Optional: select one or more built-in regions.",
+          "region_patterns": "Optional: enter a YAML list with one [regular expression]({regex_url}) per item.\n\nExample:\n\n```yaml\n- \\bки(їв|єва|єві|єву|євом)\\b\n- \\bстолиц(я|і|ю|ею)\\b\n```"
+        }
+      },
+      "localities": {
+        "title": "Localities",
+        "description": "Choose localities within the selected regions. Locality matches are required for drones and can also match every other threat type.\n\nSelect built-in localities, enter custom patterns, or use both.",
+        "data": {
+          "locality_presets": "Built-in localities",
+          "locality_patterns": "Custom locality patterns (YAML list)"
+        },
+        "data_description": {
+          "locality_presets": "Optional: select one or more built-in localities.\n\n**Tip:** Select your locality and nearby localities to receive notifications about approaching targets.",
+          "locality_patterns": "Optional: enter a YAML list with one [regular expression]({regex_url}) per item.\n\nExample:\n\n```yaml\n- \\bнив(ки|ках|ками|ок)\\b\n- \\bвиноградар(а|і|ем)?\\b\n```"
+        }
+      }
+    },
+    "error": {
+      "invalid_pattern_format": "Enter regular expressions as a YAML list of text values.",
+      "invalid_pattern": "Check each regular expression and fix invalid values.",
+      "patterns_required": "Select or enter at least one region or locality.",
+      "sources_required": "Select at least one source entity."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Aerial Danger options",
+        "description": "Select the Home Assistant entities whose states contain danger messages.",
+        "data": {
+          "sources": "Danger message sources"
+        },
+        "data_description": {
+          "sources": "Select one or more entities whose state contains danger message text."
+        }
+      },
+      "regions": {
+        "title": "Regions",
+        "description": "Choose the regions to monitor. Region matches are used for ballistic missiles, cruise missiles, and other fast threats approaching your location.\n\nSelect built-in regions, enter custom patterns, or use both.",
+        "data": {
+          "region_presets": "Built-in regions",
+          "region_patterns": "Custom region patterns (YAML list)"
+        },
+        "data_description": {
+          "region_presets": "Optional: select one or more built-in regions.",
+          "region_patterns": "Optional: enter a YAML list with one [regular expression]({regex_url}) per item.\n\nExample:\n\n```yaml\n- \\bки(їв|єва|єві|єву|євом)\\b\n- \\bстолиц(я|і|ю|ею)\\b\n```"
+        }
+      },
+      "localities": {
+        "title": "Localities",
+        "description": "Choose localities within the selected regions. Locality matches are required for drones and can also match every other threat type.\n\nSelect built-in localities, enter custom patterns, or use both.",
+        "data": {
+          "locality_presets": "Built-in localities",
+          "locality_patterns": "Custom locality patterns (YAML list)"
+        },
+        "data_description": {
+          "locality_presets": "Optional: select one or more built-in localities.\n\n**Tip:** Select your locality and nearby localities to receive notifications about approaching targets.",
+          "locality_patterns": "Optional: enter a YAML list with one [regular expression]({regex_url}) per item.\n\nExample:\n\n```yaml\n- \\bнив(ки|ках|ками|ок)\\b\n- \\bвиноградар(а|і|ем)?\\b\n```"
+        }
+      }
+    },
+    "error": {
+      "invalid_pattern_format": "Enter regular expressions as a YAML list of text values.",
+      "invalid_pattern": "Check each regular expression and fix invalid values.",
+      "patterns_required": "Select or enter at least one region or locality.",
+      "sources_required": "Select at least one source entity."
+    }
+  },
+  "selector": {
+    "region_presets": {
+      "options": {
+        "kyiv": "Kyiv",
+        "kyiv_oblast": "Kyiv Oblast"
+      }
+    },
+    "locality_presets": {
+      "options": {
+        "kyiv_akademmistechko": "Akademmistechko",
+        "kyiv_antonov": "Antonov",
+        "kyiv_berezniaky": "Berezniaky",
+        "kyiv_berkovets": "Berkovets",
+        "kyiv_bilychi": "Bilychi",
+        "kyiv_borshchahivka": "Borshchahivka",
+        "kyiv_bortnychi": "Bortnychi",
+        "kyiv_bykivnia": "Bykivnia",
+        "kyiv_center": "Center",
+        "kyiv_chokolivka": "Chokolivka",
+        "kyiv_darnytsia": "Darnytsia",
+        "kyiv_demiivka": "Demiivka",
+        "kyiv_dorohzhychi": "Dorohzhychi",
+        "kyiv_dvrz": "DVRZ",
+        "kyiv_halahany": "Halahany",
+        "kyiv_hidropark": "Hidropark",
+        "kyiv_holosiiv": "Holosiiv",
+        "kyiv_ipodrom": "Ipodrom",
+        "kyiv_karavaievi_dachi": "Karavaievi Dachi",
+        "kyiv_kharkivskyi_masyv": "Kharkivskyi Masyv",
+        "kyiv_khutir": "Chervonyi Khutir",
+        "kyiv_klov": "Klov",
+        "kyiv_koncha_zaspa": "Koncha-Zaspa",
+        "kyiv_kpi": "KPI",
+        "kyiv_kurenivka": "Kurenivka",
+        "kyiv_left_bank": "Left Bank",
+        "kyiv_lisovyi_masyv": "Lisovyi Masyv",
+        "kyiv_livoberezhnyi_masyv": "Livoberezhnyi Masyv",
+        "kyiv_lukianivka": "Lukianivka",
+        "kyiv_lypky": "Lypky",
+        "kyiv_minskyi_masyv": "Minskyi Masyv",
+        "kyiv_muromets": "Muromets Island",
+        "kyiv_mysholovka": "Mysholovka",
+        "kyiv_nova_zabudova": "Nova Zabudova",
+        "kyiv_nyvky": "Nyvky",
+        "kyiv_nyzhni_sady": "Nyzhni Sady",
+        "kyiv_obolon": "Obolon",
+        "kyiv_osokorky": "Osokorky",
+        "kyiv_pechersk": "Pechersk",
+        "kyiv_pochaiana": "Pochaiana",
+        "kyiv_podil": "Podil",
+        "kyiv_pozniaky": "Pozniaky",
+        "kyiv_priorka": "Priorka",
+        "kyiv_pushcha_vodytsia": "Pushcha-Vodytsia",
+        "kyiv_rembaza": "Rembaza",
+        "kyiv_right_bank": "Right Bank",
+        "kyiv_rusanivka": "Rusanivka",
+        "kyiv_rusanivski_sady": "Rusanivski Sady",
+        "kyiv_shuliavka": "Shuliavka",
+        "kyiv_solomianka": "Solomianka",
+        "kyiv_sviatoshyn": "Sviatoshyn",
+        "kyiv_syrets": "Syrets",
+        "kyiv_telychka": "Telychka",
+        "kyiv_teremky": "Teremky",
+        "kyiv_troieshchyna": "Troieshchyna",
+        "kyiv_vidradnyi": "Vidradnyi",
+        "kyiv_vita_lytovska": "Vita-Lytovska",
+        "kyiv_voskresenka": "Voskresenka",
+        "kyiv_vydubychi": "Vydubychi",
+        "kyiv_vynohradar": "Vynohradar",
+        "kyiv_zhuliany": "Zhuliany",
+        "kyiv_zvirynets": "Zvirynets",
+        "kyiv_oblast_boryspil": "Boryspil",
+        "kyiv_oblast_brovary": "Brovary",
+        "kyiv_oblast_bucha": "Bucha",
+        "kyiv_oblast_chaiky": "Chaiky",
+        "kyiv_oblast_dymer": "Dymer",
+        "kyiv_oblast_hnidyn": "Hnidyn",
+        "kyiv_oblast_hostomel": "Hostomel",
+        "kyiv_oblast_hotianivka": "Hotianivka",
+        "kyiv_oblast_irpin": "Irpin",
+        "kyiv_oblast_kotsiubynske": "Kotsiubynske",
+        "kyiv_oblast_kozyn": "Kozyn",
+        "kyiv_oblast_obukhiv": "Obukhiv",
+        "kyiv_oblast_petrivtsi": "Petrivtsi",
+        "kyiv_oblast_petropavlivska_borshchahivka": "Petropavlivska Borshchahivka",
+        "kyiv_oblast_pohreby": "Pohreby",
+        "kyiv_oblast_prolisky": "Prolisky",
+        "kyiv_oblast_sofiivska_borshchahivka": "Sofiivska Borshchahivka",
+        "kyiv_oblast_ukrainka": "Ukrainka",
+        "kyiv_oblast_vasylkiv": "Vasylkiv",
+        "kyiv_oblast_vorzel": "Vorzel",
+        "kyiv_oblast_vyshhorod": "Vyshhorod",
+        "kyiv_oblast_vyshneve": "Vyshneve",
+        "kyiv_oblast_zazyma": "Zazyma",
+        "kyiv_oblast_zhk_sofiia": "ZhK Sofiia"
+      }
+    }
+  },
+  "triggers": {
+    "danger": {
+      "name": "Any danger detected",
+      "description": "Triggers when the integration detects any danger type."
+    },
+    "irbm": {
+      "name": "Intermediate-range ballistic missile danger detected",
+      "description": "Triggers when the integration detects an intermediate-range ballistic missile threat."
+    },
+    "ballistic": {
+      "name": "Ballistic danger detected",
+      "description": "Triggers when the integration detects a ballistic threat approaching the monitored area."
+    },
+    "cruise": {
+      "name": "Cruise missile danger detected",
+      "description": "Triggers when the integration detects cruise missiles approaching the monitored area."
+    },
+    "drone": {
+      "name": "Drone danger detected",
+      "description": "Triggers when the integration detects drones approaching a monitored locality."
+    },
+    "unknown": {
+      "name": "Unknown danger detected",
+      "description": "Triggers when a message indicates danger but does not identify a supported threat type."
+    }
+  },
+  "entity": {
+    "event": {
+      "danger": {
+        "name": "Danger detected",
+        "state_attributes": {
+          "matched_message": {
+            "name": "Matched message"
+          },
+          "matched_area": {
+            "name": "Matched area"
+          },
+          "matched_danger": {
+            "name": "Matched danger"
+          },
+          "source_entity_id": {
+            "name": "Source entity"
+          },
+          "timestamp": {
+            "name": "Detection timestamp"
+          },
+          "event_type": {
+            "name": "Event type",
+            "state": {
+              "irbm": "Intermediate-range ballistic missile danger",
+              "ballistic": "Ballistic danger",
+              "cruise": "Cruise missile danger",
+              "drone": "Drone danger",
+              "unknown": "Unknown danger"
+            }
+          }
+        }
+      }
+    },
+    "binary_sensor": {
+      "irbm": {
+        "name": "Intermediate-range ballistic missile danger",
+        "state_attributes": {
+          "matched_message": {
+            "name": "Matched message"
+          },
+          "matched_area": {
+            "name": "Matched area"
+          },
+          "matched_danger": {
+            "name": "Matched danger"
+          },
+          "source_entity_id": {
+            "name": "Source entity"
+          }
+        }
+      },
+      "ballistic": {
+        "name": "Ballistic danger",
+        "state_attributes": {
+          "matched_message": {
+            "name": "Matched message"
+          },
+          "matched_area": {
+            "name": "Matched area"
+          },
+          "matched_danger": {
+            "name": "Matched danger"
+          },
+          "source_entity_id": {
+            "name": "Source entity"
+          }
+        }
+      },
+      "cruise": {
+        "name": "Cruise missile danger",
+        "state_attributes": {
+          "matched_message": {
+            "name": "Matched message"
+          },
+          "matched_area": {
+            "name": "Matched area"
+          },
+          "matched_danger": {
+            "name": "Matched danger"
+          },
+          "source_entity_id": {
+            "name": "Source entity"
+          }
+        }
+      },
+      "drone": {
+        "name": "Drone danger",
+        "state_attributes": {
+          "matched_message": {
+            "name": "Matched message"
+          },
+          "matched_area": {
+            "name": "Matched area"
+          },
+          "matched_danger": {
+            "name": "Matched danger"
+          },
+          "source_entity_id": {
+            "name": "Source entity"
+          }
+        }
+      },
+      "unknown": {
+        "name": "Unknown danger",
+        "state_attributes": {
+          "matched_message": {
+            "name": "Matched message"
+          },
+          "matched_area": {
+            "name": "Matched area"
+          },
+          "matched_danger": {
+            "name": "Matched danger"
+          },
+          "source_entity_id": {
+            "name": "Source entity"
+          }
+        }
+      },
+      "danger": {
+        "name": "Danger",
+        "state_attributes": {
+          "matched_message": {
+            "name": "Matched message"
+          },
+          "matched_area": {
+            "name": "Matched area"
+          },
+          "matched_danger": {
+            "name": "Matched danger"
+          },
+          "source_entity_id": {
+            "name": "Source entity"
+          }
+        }
+      }
+    },
+    "sensor": {
+      "matched_message": {
+        "name": "Matched message",
+        "state": {
+          "clear": "Clear"
+        }
+      },
+      "matched_area": {
+        "name": "Matched area",
+        "state": {
+          "clear": "Clear",
+          "nationwide": "Nationwide"
+        }
+      },
+      "matched_danger": {
+        "name": "Matched danger",
+        "state": {
+          "clear": "Clear"
+        }
+      },
+      "matched_source": {
+        "name": "Matched source",
+        "state": {
+          "clear": "Clear"
+        }
+      }
+    }
+  }
+}

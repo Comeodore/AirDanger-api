@@ -1,0 +1,9 @@
+# Local/dev run. Postgres is external (DATABASE_URL in .env); the Telethon
+# session is a StringSession env var, so no volume is required.
+services:
+  api:
+    build: .
+    env_file: .env
+    ports:
+      - "9994:8000"
+    restart: unless-stopped
