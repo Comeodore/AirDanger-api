@@ -87,8 +87,7 @@ class AppContext:
         else:
             return
 
-        cooldown = timedelta(seconds=self.config.bare_cooldown_sec) if bare else None
-        if not self.ledger.should_notify(threat, ts, cooldown):
+        if not self.ledger.should_notify(threat, ts):
             return
         logger.info("push %s/%s%s from %s: %s",
                     threat.severity, threat.type, " (context)" if bare else "",
@@ -112,10 +111,7 @@ async def lifespan(app: FastAPI):
     config = Config.from_env()
     db = await Database.connect(config.database_url)
     ledger = PushLedger(cooldown=timedelta(seconds=config.push_cooldown_sec))
-    seed_window = timedelta(
-        seconds=max(config.push_cooldown_sec, config.bare_cooldown_sec)
-    )
-    ledger.seed(await db.pushes_since(datetime.now(UTC) - seed_window))
+    ledger.seed(await db.pushes_since(datetime.now(UTC) - ledger.cooldown))
 
     push = PushService(config, on_dead_token=db.delete_device)
     ctx = AppContext(

@@ -36,7 +36,6 @@ class Config:
     push_warnings: bool
     push_types: frozenset[str]
     poll_sec: float
-    bare_cooldown_sec: int = 180
     context_ttl_min: int = 20
     _apns_key_path: str | None = field(default=None, repr=False)
 
@@ -52,7 +51,7 @@ class Config:
             apns_sandbox=_bool("APNS_SANDBOX", default=False),
             api_key=os.environ.get("API_KEY") or None,
             critical_alerts=_bool("CRITICAL_ALERTS", default=False),
-            push_cooldown_sec=int(os.environ.get("PUSH_COOLDOWN_SEC") or 60),
+            push_cooldown_sec=int(os.environ.get("PUSH_COOLDOWN_SEC") or 120),
             push_warnings=_bool("PUSH_WARNINGS", default=True),
             push_types=frozenset(
                 t.strip()
@@ -62,7 +61,6 @@ class Config:
             poll_sec=float(
                 os.environ.get("POLL_SEC") or os.environ.get("PREVIEW_POLL_SEC") or 5
             ),
-            bare_cooldown_sec=int(os.environ.get("BARE_COOLDOWN_SEC") or 180),
             context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
         )
 
