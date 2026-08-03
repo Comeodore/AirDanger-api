@@ -19,6 +19,8 @@ TYPE_NAMES_UK = {
 
 DEAD_TOKEN_REASONS = {"BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"}
 
+ALERT_SOUND = "alert.caf"
+
 TITLE_LIMIT = 110
 BODY_LIMIT = 178
 
@@ -67,13 +69,13 @@ class PushService:
         if threat.severity == "warning":
             aps = {
                 "alert": alert,
-                "sound": "default",
+                "sound": ALERT_SOUND,
             }
         else:
             if self._config.critical_alerts:
-                sound: dict | str = {"critical": 1, "name": "default", "volume": 1.0}
+                sound: dict | str = {"critical": 1, "name": ALERT_SOUND, "volume": 1.0}
             else:
-                sound = "default"
+                sound = ALERT_SOUND
             aps = {
                 "alert": alert,
                 "sound": sound,
