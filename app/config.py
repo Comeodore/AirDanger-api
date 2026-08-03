@@ -36,7 +36,8 @@ class Config:
     push_warnings: bool
     push_types: frozenset[str]
     poll_sec: float
-    dedup_ttl_min: int = 15
+    bare_cooldown_sec: int = 180
+    context_ttl_min: int = 20
     _apns_key_path: str | None = field(default=None, repr=False)
 
     @classmethod
@@ -61,6 +62,8 @@ class Config:
             poll_sec=float(
                 os.environ.get("POLL_SEC") or os.environ.get("PREVIEW_POLL_SEC") or 5
             ),
+            bare_cooldown_sec=int(os.environ.get("BARE_COOLDOWN_SEC") or 180),
+            context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
         )
 
     @property

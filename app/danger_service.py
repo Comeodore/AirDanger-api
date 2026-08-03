@@ -8,6 +8,7 @@ BALLISTIC_WORDS = [
     r"\bбалістик\w+",
     r"\bбалістичн\w+",
     r"\bциркон\w*\b",
+    r"\bцикрон\w*\b",
     r"\bкинджал\w*\b",
     r"\bіскандер\w*\b",
     r"\bотрк\b",
@@ -31,10 +32,31 @@ DRONE_WORDS = [
 ]
 
 
-ELSEWHERE = [
-    r"\bна\s+(черкас|полтав|сум|харків|дніпр|одес|вінниц|житомир|чернігів|кременчук|"
+OTHER_WEAPONS = [
+    r"\bкалібр\w*",
+    r"\bтуш(к|ок)\w*",
+    r"\bту-?\d+",
+    r"\bкрилат\w+",
+    r"\bх-?101\b",
+    r"\bх-?59\b",
+    r"\bбандерол\w*",
+]
+
+
+_PLACES = (
+    r"черкас|полтав|сум|харків|дніпр|одес|вінниц|житомир|чернігів|кременчук|"
     r"запоріж|миколаїв|кропивниц|умань|луцьк|рівн|тернопіл|хмельниц|ужгород|івано|"
-    r"львів|бровар|білу церкву)\w*",
+    r"львів|бровар|білу церкву|кривий ріг|"
+    r"сумщин|чернігівщин|харківщин|полтавщин|черкащин|житомирщин|вінниччин|"
+    r"кіровоградщин|дніпропетровщин|миколаївщин|одещин|хмельниччин|рівненщин|"
+    r"львівщин|тернопільщин|луганщин|донеччин|херсонщин|"
+    r"ржищ|українк|бориспіл|обухів|васильк|фастів|ірпін|буч[аі]|боярк|вишнев|"
+    r"глевах|кагарлик|миронівк"
+)
+ELSEWHERE = [
+    rf"\bна\s+({_PLACES})\w*",
+    rf"\bдо\s+({_PLACES})\w*",
+    rf"\bв\s+бік\s+({_PLACES})\w*",
 ]
 OURS = [
     r"\bкиїв\w*",
@@ -71,6 +93,18 @@ BACKEND_VETO = [
     r"\bобстріл\w*",
     r"\bнеактивн\w+",
     r"\bзбій\b",
+    r"\bбез фіксац\w*",
+    r"\bпоки все\b",
+    r"\bначе все\b",
+    r"\bвсе поки\b",
+    r"\bзникл\w+",
+    r"\bочікуємо\b",
+    r"\bдо відбою\b",
+    r"\bвсе спокійно\b",
+    r"\bне до нас\b",
+    r"\bне на нас\b",
+    r"\bне на київ\w*",
+    r"\bрежимі ппо\b",
 ]
 
 
@@ -91,6 +125,7 @@ INBOUND_MARKERS = [
     r"\bзаходить\b",
     r"\bнаближа\w+",
     r"\b\d+\s*(?:балістик|циркон|кинджал|іскандер)\w*",
+    r"\b\d+\s*[-–]?\s*\d*\s*ракет\w*",
 ]
 WARNING_MARKERS = [
     r"\bзагроз\w+",
@@ -117,6 +152,8 @@ class DetectedThreat:
 class Evaluation:
     safety: bool = False
     detection: DetectedThreat | None = None
+    other_weapon: bool = False
+    bare_target: bool = False
 
 class DangerService:
     def __init__(self) -> None:
@@ -129,6 +166,7 @@ class DangerService:
         self._ballistic = matcher.compile_patterns(BALLISTIC_WORDS)
         self._target = matcher.compile_patterns(TARGET_ON_KYIV)
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
+        self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
         self._elsewhere = matcher.compile_patterns(ELSEWHERE)
         self._ours = matcher.compile_patterns(OURS)
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
@@ -137,6 +175,11 @@ class DangerService:
     def severity(self, text: str) -> str:
         if self._matcher.match_first(self._inbound_markers, text):
             return "inbound"
+        if self._matcher.match_first(self._warning_markers, text):
+            return "warning"
+        return "inbound"
+
+    def bare_severity(self, text: str) -> str:
         if self._matcher.match_first(self._warning_markers, text):
             return "warning"
         return "inbound"
@@ -166,9 +209,13 @@ class DangerService:
             ))
 
         if self._matcher.match_first(self._drone_words, text):
-            return Evaluation()
+            return Evaluation(other_weapon=True)
+        if self._matcher.match_first(self._other_weapons, text):
+            return Evaluation(other_weapon=True)
         if self._matcher.match_first(self._target, text):
             return Evaluation(detection=DetectedThreat(
                 type="ballistic", text=text, severity="inbound",
             ))
+        if self._matcher.match_first(self._inbound_markers, text):
+            return Evaluation(bare_target=True)
         return Evaluation()

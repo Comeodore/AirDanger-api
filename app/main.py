@@ -8,12 +8,11 @@ from fastapi import FastAPI
 
 from .api import router
 from .config import Config
-from .danger_service import DangerService
+from .danger_service import DangerService, DetectedThreat
 from .db import Database
-from .dedup import TTLSet, digest
 from .ingest import ChannelPoller
 from .push import PushService
-from .state import PushLedger
+from .state import ChannelContext, PushLedger
 
 class _TrimAccessLog(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
@@ -59,20 +58,41 @@ class AppContext:
     ledger: PushLedger
     push: PushService
     ingest: ChannelPoller | None
-    dedup: TTLSet
+    context: ChannelContext
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
-        if not self.dedup.add(digest(text)):
+        evaluation = self.danger.evaluate(text)
+        if evaluation.safety:
+            self.context.clear()
             return
-        threat = self.danger.evaluate(text).detection
-        if threat is None or threat.type not in self.config.push_types:
+        if evaluation.other_weapon:
+            self.context.mark_other(ts)
+
+        threat = evaluation.detection
+        bare = False
+        if threat is not None:
+            if threat.type not in self.config.push_types:
+                return
+            self.context.mark_ballistic(ts)
+            if threat.severity == "warning" and not self.config.push_warnings:
+                return
+        elif evaluation.bare_target:
+            if not self.context.ballistic_leads(ts):
+                return
+            severity = self.danger.bare_severity(text)
+            if severity == "warning" and not self.config.push_warnings:
+                return
+            threat = DetectedThreat(type="ballistic", text=text, severity=severity)
+            bare = True
+        else:
             return
-        if threat.severity == "warning" and not self.config.push_warnings:
+
+        cooldown = timedelta(seconds=self.config.bare_cooldown_sec) if bare else None
+        if not self.ledger.should_notify(threat, ts, cooldown):
             return
-        if not self.ledger.should_notify(threat, ts):
-            return
-        logger.info("push %s/%s from %s: %s",
-                    threat.severity, threat.type, source, " ".join(text.split())[:80])
+        logger.info("push %s/%s%s from %s: %s",
+                    threat.severity, threat.type, " (context)" if bare else "",
+                    source, " ".join(text.split())[:80])
         await self.db.insert_push(source, threat.type, threat.severity, text, ts)
         tokens = await self.db.tokens()
         await self.push.send_detection(tokens, threat, ts, source=source)
@@ -92,13 +112,16 @@ async def lifespan(app: FastAPI):
     config = Config.from_env()
     db = await Database.connect(config.database_url)
     ledger = PushLedger(cooldown=timedelta(seconds=config.push_cooldown_sec))
-    ledger.seed(await db.pushes_since(datetime.now(UTC) - ledger.cooldown))
+    seed_window = timedelta(
+        seconds=max(config.push_cooldown_sec, config.bare_cooldown_sec)
+    )
+    ledger.seed(await db.pushes_since(datetime.now(UTC) - seed_window))
 
     push = PushService(config, on_dead_token=db.delete_device)
-    dedup_ttl_sec = min(config.dedup_ttl_min * 60, config.push_cooldown_sec)
     ctx = AppContext(
         config=config, db=db, danger=DangerService(), ledger=ledger,
-        push=push, ingest=None, dedup=TTLSet(ttl_seconds=dedup_ttl_sec),
+        push=push, ingest=None,
+        context=ChannelContext(ttl=timedelta(minutes=config.context_ttl_min)),
     )
     ctx.ingest = ChannelPoller(config, ctx.handle_message)
     tasks = [

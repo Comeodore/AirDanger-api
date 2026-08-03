@@ -2,9 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from app.config import Config
 from app.danger_service import DangerService
-from app.dedup import TTLSet
 from app.main import AppContext
-from app.state import PushLedger
+from app.state import ChannelContext, PushLedger
 
 T0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
@@ -20,6 +19,8 @@ def make_config(push_warnings: bool = False) -> Config:
         push_warnings=push_warnings,
         push_types=frozenset({"ballistic", "irbm"}),
         poll_sec=5.0,
+        bare_cooldown_sec=180,
+        context_ttl_min=20,
     )
 
 
@@ -48,7 +49,7 @@ def make_ctx(push_warnings: bool = False) -> AppContext:
         ledger=PushLedger(cooldown=timedelta(seconds=60)),
         push=FakePush(),
         ingest=None,
-        dedup=TTLSet(ttl_seconds=60),
+        context=ChannelContext(ttl=timedelta(minutes=20)),
     )
 
 async def test_ballistic_mention_pushes_and_is_recorded():
@@ -95,8 +96,113 @@ async def test_safety_messages_are_dropped():
     await ctx.handle_message("kyiv_nebo", "Відбій. Цілі зникли.", T0)
     assert ctx.push.sent == []
 
-async def test_exact_duplicate_is_deduped():
+async def test_repeat_inside_cooldown_is_silent():
     ctx = make_ctx()
     await ctx.handle_message("kyiv_nebo", "Швидкісна ціль на Київ!", T0)
     await ctx.handle_message("kyiv_nebo", "Швидкісна ціль на Київ!", T0 + timedelta(seconds=10))
     assert len(ctx.push.sent) == 1
+
+async def test_identical_repeat_after_cooldown_pushes_again():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Швидкісна ціль на Київ!", T0)
+    await ctx.handle_message("kyiv_nebo", "Швидкісна ціль на Київ!", T0 + timedelta(seconds=61))
+    assert len(ctx.push.sent) == 2
+
+async def test_bare_target_pushes_inside_ballistic_context():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
+    await ctx.handle_message("kyiv_nebo", "Цілі", T0 + timedelta(seconds=12))
+    assert ctx.push.sent == ["Цілі"]
+    assert ctx.db.pushes == [("kyiv_nebo", "ballistic", "inbound", "Цілі")]
+
+async def test_bare_target_without_context_is_silent():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Цілі", T0)
+    await ctx.handle_message("kyiv_nebo", "Підлітають", T0 + timedelta(seconds=30))
+    assert ctx.push.sent == []
+
+async def test_bare_target_is_silent_under_other_weapon_context():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
+    await ctx.handle_message("kyiv_nebo", "Це реактивні Шахеди", T0 + timedelta(minutes=1))
+    await ctx.handle_message("kyiv_nebo", "Летять на Київ", T0 + timedelta(minutes=2))
+    assert ctx.push.sent == []
+
+async def test_safety_clears_ballistic_context():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=1))
+    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(minutes=2))
+    assert ctx.push.sent == []
+
+async def test_ballistic_context_expires_after_ttl():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
+    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(minutes=21))
+    assert ctx.push.sent == []
+
+async def test_bare_target_uses_longer_cooldown():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(seconds=90))
+    assert len(ctx.push.sent) == 1
+    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(seconds=181))
+    assert len(ctx.push.sent) == 2
+
+async def test_weapon_mention_not_blocked_by_bare_cooldown():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
+    await ctx.handle_message("kyiv_nebo", "Цілі", T0 + timedelta(seconds=10))
+    await ctx.handle_message("kyiv_nebo", "Ще Циркон на Київ", T0 + timedelta(seconds=75))
+    assert len(ctx.push.sent) == 2
+
+async def test_target_elsewhere_is_silent_in_context():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика", T0)
+    ctx.push.sent.clear()
+    ctx.db.pushes.clear()
+    await ctx.handle_message("kyiv_nebo", "Ціль на Сумщині", T0 + timedelta(minutes=5))
+    await ctx.handle_message("kyiv_nebo", "Ціль на Кременчук, не до нас", T0 + timedelta(minutes=6))
+    await ctx.handle_message("kyiv_nebo", "Без фіксації цілей", T0 + timedelta(minutes=7))
+    assert ctx.push.sent == []
+
+async def test_cruise_launches_do_not_push_as_ballistic():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
+    await ctx.handle_message("kyiv_nebo", "Попередньо, пуски ракет із ТУшок", T0 + timedelta(minutes=1))
+    await ctx.handle_message("kyiv_nebo", "Ще пуски Калібрів", T0 + timedelta(minutes=2))
+    assert ctx.push.sent == []
+
+async def test_cruise_context_suppresses_later_bare_targets():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message("kyiv_nebo", "Пуски Калібрів", T0 + timedelta(minutes=1))
+    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(minutes=5))
+    assert ctx.push.sent == []
+
+async def test_hypothetical_bare_wording_is_treated_as_warning():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message("kyiv_nebo", "Ще можуть бути пуски", T0 + timedelta(minutes=5))
+    assert ctx.push.sent == []
+
+async def test_ballistic_after_drones_reopens_bare_pushes():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Шахеди на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0 + timedelta(minutes=5))
+    await ctx.handle_message("kyiv_nebo", "3 на Київ", T0 + timedelta(minutes=6))
+    assert ctx.push.sent == ["3 на Київ"]
+
+async def test_drones_after_ballistic_close_bare_pushes():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
+    await ctx.handle_message("kyiv_nebo", "Це реактивні Шахеди", T0 + timedelta(minutes=5))
+    await ctx.handle_message("kyiv_nebo", "Підлітають з півдня", T0 + timedelta(minutes=6))
+    assert ctx.push.sent == []
+
+async def test_misspelled_zircon_is_recognised():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Цикрони + С-400", T0)
+    assert ctx.push.sent == ["Цикрони + С-400"]
