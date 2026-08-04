@@ -4,12 +4,39 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from aioapns import APNs, NotificationRequest, PushType
+from aioapns.common import DynamicBoundedSemaphore
+from aioapns.connection import ChannelPool, H2Protocol
 
 from .config import Config
 from .danger_service import DetectedThreat
 from .timefmt import iso_kyiv
 
 logger = logging.getLogger(__name__)
+
+
+class HonestChannelPool(ChannelPool):
+    @property
+    def bound(self) -> int:
+        return self._bound_value
+
+    @bound.setter
+    def bound(self, value: int) -> None:
+        in_flight = self._bound_value - self._value
+        self._bound_value = value
+        self._value = max(0, value - in_flight)
+
+
+def install_honest_channel_pool() -> None:
+    if getattr(H2Protocol, "_airdanger_honest_pool", False):
+        return
+    original_init = H2Protocol.__init__
+
+    def __init__(self) -> None:
+        original_init(self)
+        self.free_channels = HonestChannelPool(1)
+
+    H2Protocol.__init__ = __init__
+    H2Protocol._airdanger_honest_pool = True
 
 TYPE_NAMES_UK = {
     "irbm": "МБР",
@@ -49,6 +76,7 @@ class PushService:
         self._on_dead_token = on_dead_token
         self._semaphore = asyncio.Semaphore(concurrency)
         self._apns: APNs | None = None
+        install_honest_channel_pool()
         if config.apns_configured:
             self._apns = APNs(
                 key=config.apns_key_path(),
@@ -63,7 +91,7 @@ class PushService:
     async def send_detection(
         self, tokens: list[str], threat: DetectedThreat, ts: datetime,
         source: str | None = None,
-    ) -> None:
+    ) -> int:
         type_name = TYPE_NAMES_UK.get(threat.type, "Небезпека")
         alert = push_alert(threat.text, fallback=f"{type_name} — Київ")
         if threat.severity == "warning":
@@ -90,14 +118,15 @@ class PushService:
             "text": threat.text,
             "ts": iso_kyiv(ts),
         }
-        await self._fan_out(tokens, payload, priority=10)
+        return await self._fan_out(tokens, payload, priority=10)
 
-    async def _fan_out(self, tokens: list[str], payload: dict, priority: int) -> None:
+    async def _fan_out(self, tokens: list[str], payload: dict, priority: int) -> int:
         if self._apns is None or not tokens:
-            return
-        await asyncio.gather(*(self._send_one(t, payload, priority) for t in tokens))
+            return 0
+        sent = await asyncio.gather(*(self._send_one(t, payload, priority) for t in tokens))
+        return sum(sent)
 
-    async def _send_one(self, token: str, payload: dict, priority: int) -> None:
+    async def _send_one(self, token: str, payload: dict, priority: int) -> bool:
         try:
             async with self._semaphore:
                 request = NotificationRequest(
@@ -111,5 +140,8 @@ class PushService:
                 logger.warning("push to %s… failed: %s", token[:8], response.description)
                 if response.description in DEAD_TOKEN_REASONS:
                     await self._on_dead_token(token)
+                return False
+            return True
         except Exception:
             logger.exception("push to %s… crashed", token[:8])
+            return False

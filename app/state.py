@@ -43,12 +43,17 @@ class PushLedger:
     _last_push: dict[tuple[str, str], datetime] = field(default_factory=dict)
 
     def should_notify(self, threat: DetectedThreat, ts: datetime) -> bool:
-        key = (threat.severity, threat.type)
-        last = self._last_push.get(key)
-        if last is not None and ts - last < self.cooldown:
-            return False
-        self._last_push[key] = ts
-        return True
+        last = self._last_push.get((threat.severity, threat.type))
+        return last is None or ts - last >= self.cooldown
+
+    def note(self, threat: DetectedThreat, ts: datetime) -> None:
+        self._last_push[(threat.severity, threat.type)] = ts
+
+    def wait_left(self, threat: DetectedThreat, ts: datetime) -> timedelta:
+        last = self._last_push.get((threat.severity, threat.type))
+        if last is None:
+            return timedelta()
+        return max(timedelta(), self.cooldown - (ts - last))
 
     def seed(self, rows: list[dict]) -> None:
         for row in rows:

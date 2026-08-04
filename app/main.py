@@ -1,6 +1,9 @@
 import asyncio
 import contextlib
 import logging
+import os
+import sys
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -31,9 +34,10 @@ class _ShortName(logging.Filter):
 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.environ.get("LOG_LEVEL", "INFO").strip().upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -49,6 +53,12 @@ logger = logging.getLogger(__name__)
 
 DEVICE_PURGE_INTERVAL_SEC = 24 * 3600
 
+BRIEF_LIMIT = 80
+
+
+def brief(text: str) -> str:
+    return " ".join(text.split())[:BRIEF_LIMIT]
+
 
 @dataclass
 class AppContext:
@@ -61,40 +71,77 @@ class AppContext:
     context: ChannelContext
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
+        short = brief(text)
         evaluation = self.danger.evaluate(text)
         if evaluation.safety:
+            if self.context.ballistic_live(ts):
+                logger.info("%s: safety cleared ballistic context — %s", source, short)
+            else:
+                logger.debug("%s: safety, no live context — %s", source, short)
             self.context.clear()
             return
         if evaluation.other_weapon:
+            logger.debug("%s: other weapon marks context — %s", source, short)
             self.context.mark_other(ts)
 
         threat = evaluation.detection
         bare = False
         if threat is not None:
             if threat.type not in self.config.push_types:
+                logger.debug("%s: %s not in PUSH_TYPES — %s", source, threat.type, short)
                 return
             self.context.mark_ballistic(ts)
             if threat.severity == "warning" and not self.config.push_warnings:
+                logger.info("%s: %s warning silent, PUSH_WARNINGS off — %s",
+                            source, threat.type, short)
                 return
         elif evaluation.bare_target:
             if not self.context.ballistic_leads(ts):
+                logger.info("%s: bare target dropped, no ballistic context — %s",
+                            source, short)
                 return
             severity = self.danger.bare_severity(text)
             if severity == "warning" and not self.config.push_warnings:
+                logger.info("%s: bare warning silent, PUSH_WARNINGS off — %s",
+                            source, short)
                 return
             threat = DetectedThreat(type="ballistic", text=text, severity=severity)
             bare = True
         else:
+            logger.debug("%s: no match — %s", source, short)
             return
 
+        label = f"{threat.severity}/{threat.type}{' (context)' if bare else ''}"
         if not self.ledger.should_notify(threat, ts):
+            left = int(self.ledger.wait_left(threat, ts).total_seconds())
+            logger.info("%s: %s suppressed, cooldown %ds left — %s",
+                        source, label, left, short)
             return
-        logger.info("push %s/%s%s from %s: %s",
-                    threat.severity, threat.type, " (context)" if bare else "",
-                    source, " ".join(text.split())[:80])
-        await self.db.insert_push(source, threat.type, threat.severity, text, ts)
+
         tokens = await self.db.tokens()
-        await self.push.send_detection(tokens, threat, ts, source=source)
+        if not tokens:
+            logger.warning("%s: %s dropped, no devices registered — %s",
+                           source, label, short)
+            return
+
+        logger.info("%s: %s sending to %d device(s) — %s",
+                    source, label, len(tokens), short)
+        started = time.monotonic()
+        delivered = await self.push.send_detection(tokens, threat, ts, source=source)
+        took = int((time.monotonic() - started) * 1000)
+
+        if not delivered:
+            logger.error("%s: %s DELIVERED TO NONE of %d devices in %dms",
+                         source, label, len(tokens), took)
+            return
+        if delivered < len(tokens):
+            logger.warning("%s: %s delivered to %d of %d devices in %dms",
+                           source, label, delivered, len(tokens), took)
+        else:
+            logger.info("%s: %s delivered to %d/%d devices in %dms",
+                        source, label, delivered, len(tokens), took)
+        self.ledger.note(threat, ts)
+        await self.db.insert_push(source, threat.type, threat.severity, text, ts)
 
     async def purge_loop(self) -> None:
         while True:
@@ -111,7 +158,18 @@ async def lifespan(app: FastAPI):
     config = Config.from_env()
     db = await Database.connect(config.database_url)
     ledger = PushLedger(cooldown=timedelta(seconds=config.push_cooldown_sec))
-    ledger.seed(await db.pushes_since(datetime.now(UTC) - ledger.cooldown))
+    seeded = await db.pushes_since(datetime.now(UTC) - ledger.cooldown)
+    ledger.seed(seeded)
+    logger.info(
+        "config: channels=%s poll=%.1fs cooldown=%ds types=%s warnings=%s critical=%s "
+        "apns=%s topic=%s ttl=%dmin devices=%d ledger_seeded=%d",
+        ",".join(config.channels), config.poll_sec, config.push_cooldown_sec,
+        ",".join(sorted(config.push_types)), config.push_warnings, config.critical_alerts,
+        "SANDBOX" if config.apns_sandbox else "production", config.apns_topic,
+        config.context_ttl_min, len(await db.tokens()), len(seeded),
+    )
+    if not config.apns_configured:
+        logger.error("APNs not configured — pushes are disabled")
 
     push = PushService(config, on_dead_token=db.delete_device)
     ctx = AppContext(

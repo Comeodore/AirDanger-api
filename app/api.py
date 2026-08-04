@@ -1,8 +1,11 @@
+import logging
 import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -20,12 +23,17 @@ class DeviceRegistration(BaseModel):
 
 @router.post("/devices", dependencies=[Depends(check_api_key)])
 async def register_device(body: DeviceRegistration, request: Request) -> dict:
-    await _ctx(request).db.upsert_device(body.token.lower())
+    db = _ctx(request).db
+    token = body.token.lower()
+    await db.upsert_device(token)
+    logger.info("device registered %s… (%d total)", token[:8], len(await db.tokens()))
     return {"ok": True}
 
 @router.delete("/devices/{token}", dependencies=[Depends(check_api_key)])
 async def unregister_device(token: str, request: Request) -> dict:
-    await _ctx(request).db.delete_device(token.lower())
+    db = _ctx(request).db
+    await db.delete_device(token.lower())
+    logger.info("device removed %s… (%d left)", token[:8].lower(), len(await db.tokens()))
     return {"ok": True}
 
 @router.get("/health")

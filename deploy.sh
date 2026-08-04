@@ -31,6 +31,7 @@ echo "==> recreate container '$CONTAINER'"
 ssh_do "docker rm -f $CONTAINER 2>/dev/null || true; \
   docker run -d --name $CONTAINER --restart unless-stopped \
     --env-file $REMOTE_DIR/.env \
+    --log-opt max-size=20m --log-opt max-file=5 \
     -p $HOSTPORT:8000 $IMAGE:latest && \
   docker ps --filter name=$CONTAINER --format '{{.Names}} {{.Status}} {{.Ports}}'"
 
