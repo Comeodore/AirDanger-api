@@ -1,14 +1,18 @@
+import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from aioapns import PushType
 
 from app.config import Config
 from app.danger_service import DetectedThreat
-from app.push import BACKGROUND_PRIORITY, PushService, SendOutcome
+from app.push import BACKGROUND_PRIORITY, PROBE_CONCURRENCY, PushService, SendOutcome
 
 TOKEN_A = "aa" * 32
 TOKEN_B = "bb" * 32
 TOKEN_C = "cc" * 32
+
+ALERT_CONCURRENCY = 50
 
 
 def make_service() -> tuple[PushService, list[str]]:
@@ -101,7 +105,7 @@ async def test_mixed_unregistered_and_mismatch_removes_only_the_unregistered():
 
 
 def stub_send_one(service: PushService, reason: str | None, captured: list) -> None:
-    async def fake(token, payload, priority, push_type=None):
+    async def fake(token, payload, priority, push_type=None, **kwargs):
         captured.append((token, payload, priority, push_type))
         return SendOutcome(token, reason is None, reason)
 
@@ -127,7 +131,7 @@ async def test_inconclusive_probe_keeps_the_token():
         service, _ = make_service()
         captured: list = []
 
-        async def fake(token, payload, priority, push_type=None, _r=reason):
+        async def fake(token, payload, priority, push_type=None, _r=reason, **kwargs):
             captured.append(token)
             return SendOutcome(token, False, _r)
 
@@ -153,11 +157,62 @@ async def test_token_is_usable_when_apns_is_not_configured():
     assert await service.token_is_usable(TOKEN_A) is True
 
 
+def watch_pools(service: PushService) -> list[tuple[int, int]]:
+    seen: list[tuple[int, int]] = []
+
+    class FakeAPNs:
+        async def send_notification(self, request):
+            seen.append((service._semaphore._value, service._probe_semaphore._value))
+            return SimpleNamespace(is_successful=True, description=None)
+
+    service._apns = FakeAPNs()
+    return seen
+
+
+async def test_probe_uses_its_own_pool_and_leaves_the_alert_pool_untouched():
+    service, _ = make_service()
+    seen = watch_pools(service)
+    await service.token_is_usable(TOKEN_A)
+    alert_free, probe_free = seen[0]
+    assert alert_free == ALERT_CONCURRENCY
+    assert probe_free == PROBE_CONCURRENCY - 1
+
+
+async def test_alert_uses_the_alert_pool_and_leaves_the_probe_pool_untouched():
+    service, _ = make_service()
+    seen = watch_pools(service)
+    threat = DetectedThreat(type="ballistic", text="Балістика", severity="inbound")
+    await service.send_detection([TOKEN_A], threat, datetime.now(UTC), source="kyiv_nebo")
+    alert_free, probe_free = seen[0]
+    assert alert_free == ALERT_CONCURRENCY - 1
+    assert probe_free == PROBE_CONCURRENCY
+
+
+async def test_saturated_probe_pool_cannot_delay_an_alert():
+    service, _ = make_service()
+    service._apns = SimpleNamespace(
+        send_notification=lambda request: asyncio.sleep(
+            0, SimpleNamespace(is_successful=True, description=None)
+        )
+    )
+    for _ in range(PROBE_CONCURRENCY):
+        await service._probe_semaphore.acquire()
+    assert service._probe_semaphore.locked()
+
+    threat = DetectedThreat(type="ballistic", text="Балістика", severity="inbound")
+    reached = await asyncio.wait_for(
+        service.send_detection([TOKEN_A, TOKEN_B], threat, datetime.now(UTC),
+                               source="kyiv_nebo"),
+        timeout=2,
+    )
+    assert reached == 2
+
+
 async def test_send_detection_is_a_high_priority_time_sensitive_alert():
     service, _ = make_service()
     captured: list[tuple] = []
 
-    async def fake_send_one(token, payload, priority):
+    async def fake_send_one(token, payload, priority, **kwargs):
         captured.append((token, payload, priority))
         return SendOutcome(token, True)
 

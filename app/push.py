@@ -60,6 +60,8 @@ BACKGROUND_PRIORITY = 5
 
 SILENT_PAYLOAD = {"aps": {"content-available": 1}}
 
+PROBE_CONCURRENCY = 4
+
 
 @dataclass
 class SendOutcome:
@@ -87,10 +89,12 @@ class PushService:
         config: Config,
         on_dead_token: Callable[[str], Awaitable[None]],
         concurrency: int = 50,
+        probe_concurrency: int = PROBE_CONCURRENCY,
     ) -> None:
         self._config = config
         self._on_dead_token = on_dead_token
         self._semaphore = asyncio.Semaphore(concurrency)
+        self._probe_semaphore = asyncio.Semaphore(probe_concurrency)
         self._apns: APNs | None = None
         install_honest_channel_pool()
         if config.apns_configured:
@@ -141,6 +145,7 @@ class PushService:
             return True
         outcome = await self._send_one(
             token, SILENT_PAYLOAD, BACKGROUND_PRIORITY, PushType.BACKGROUND,
+            gate=self._probe_semaphore,
         )
         return outcome.reason not in UNUSABLE_TOKEN_REASONS
 
@@ -174,9 +179,10 @@ class PushService:
     async def _send_one(
         self, token: str, payload: dict, priority: int,
         push_type: PushType = PushType.ALERT,
+        gate: asyncio.Semaphore | None = None,
     ) -> SendOutcome:
         try:
-            async with self._semaphore:
+            async with gate or self._semaphore:
                 request = NotificationRequest(
                     device_token=token,
                     message=payload,
