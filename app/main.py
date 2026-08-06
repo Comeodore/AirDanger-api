@@ -51,8 +51,6 @@ for _name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
 logging.getLogger("uvicorn.access").addFilter(_TrimAccessLog())
 logger = logging.getLogger(__name__)
 
-DEVICE_PURGE_INTERVAL_SEC = 24 * 3600
-
 BRIEF_LIMIT = 80
 
 
@@ -143,16 +141,6 @@ class AppContext:
         self.ledger.note(threat, ts)
         await self.db.insert_push(source, threat.type, threat.severity, text, ts)
 
-    async def purge_loop(self) -> None:
-        while True:
-            try:
-                purged = await self.db.purge_stale_devices()
-                if purged:
-                    logger.info("purged %d stale devices", purged)
-            except Exception:
-                logger.exception("device purge failed")
-            await asyncio.sleep(DEVICE_PURGE_INTERVAL_SEC)
-
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     config = Config.from_env()
@@ -178,10 +166,7 @@ async def lifespan(app: FastAPI):
         context=ChannelContext(ttl=timedelta(minutes=config.context_ttl_min)),
     )
     ctx.ingest = ChannelPoller(config, ctx.handle_message)
-    tasks = [
-        asyncio.create_task(ctx.purge_loop()),
-        asyncio.create_task(ctx.ingest.run()),
-    ]
+    tasks = [asyncio.create_task(ctx.ingest.run())]
 
     app.state.ctx = ctx
     try:

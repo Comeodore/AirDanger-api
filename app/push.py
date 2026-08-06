@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 
 from aioapns import APNs, NotificationRequest, PushType
@@ -44,12 +45,21 @@ TYPE_NAMES_UK = {
 }
 
 
-DEAD_TOKEN_REASONS = {"BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic"}
+CONFIRMED_DEAD_REASON = "Unregistered"
+
+MISMATCH_REASONS = {"BadDeviceToken", "DeviceTokenNotForTopic"}
 
 ALERT_SOUND = "alert.caf"
 
 TITLE_LIMIT = 110
 BODY_LIMIT = 178
+
+
+@dataclass
+class SendOutcome:
+    token: str
+    ok: bool
+    reason: str | None = None
 
 
 def push_alert(text: str, fallback: str) -> dict:
@@ -123,10 +133,31 @@ class PushService:
     async def _fan_out(self, tokens: list[str], payload: dict, priority: int) -> int:
         if self._apns is None or not tokens:
             return 0
-        sent = await asyncio.gather(*(self._send_one(t, payload, priority) for t in tokens))
-        return sum(sent)
+        outcomes = await asyncio.gather(
+            *(self._send_one(t, payload, priority) for t in tokens)
+        )
+        await self._retire_dead(outcomes)
+        return sum(1 for outcome in outcomes if outcome.ok)
 
-    async def _send_one(self, token: str, payload: dict, priority: int) -> bool:
+    async def _retire_dead(self, outcomes: list[SendOutcome]) -> None:
+        mismatched = [o for o in outcomes if o.reason in MISMATCH_REASONS]
+        if mismatched and len(mismatched) == len(outcomes):
+            logger.error(
+                "every push failed with %s — check APNS_SANDBOX and APNS_TOPIC; "
+                "keeping all %d device(s)", mismatched[0].reason, len(outcomes),
+            )
+        elif mismatched:
+            logger.warning(
+                "keeping %d device(s) rejected as %s: %s",
+                len(mismatched), mismatched[0].reason,
+                ", ".join(f"{o.token[:8]}…" for o in mismatched),
+            )
+        for outcome in outcomes:
+            if outcome.reason == CONFIRMED_DEAD_REASON:
+                logger.info("device %s… removed: %s", outcome.token[:8], outcome.reason)
+                await self._on_dead_token(outcome.token)
+
+    async def _send_one(self, token: str, payload: dict, priority: int) -> SendOutcome:
         try:
             async with self._semaphore:
                 request = NotificationRequest(
@@ -138,10 +169,8 @@ class PushService:
                 response = await self._apns.send_notification(request)
             if not response.is_successful:
                 logger.warning("push to %s… failed: %s", token[:8], response.description)
-                if response.description in DEAD_TOKEN_REASONS:
-                    await self._on_dead_token(token)
-                return False
-            return True
+                return SendOutcome(token, False, response.description)
+            return SendOutcome(token, True)
         except Exception:
             logger.exception("push to %s… crashed", token[:8])
-            return False
+            return SendOutcome(token, False)

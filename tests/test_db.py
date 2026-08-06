@@ -27,16 +27,6 @@ async def test_delete_device(db):
     await db.delete_device("aa" * 32)
     assert await db.tokens() == []
 
-async def test_purge_stale_devices(db):
-    await db.upsert_device("aa" * 32)
-    await db._pool.execute(
-        "UPDATE devices SET updated_at = now() - interval '91 days' WHERE token = $1",
-        "aa" * 32,
-    )
-    await db.upsert_device("bb" * 32)
-    assert await db.purge_stale_devices() == 1
-    assert await db.tokens() == ["bb" * 32]
-
 async def test_push_round_trip(db):
     now = datetime.now(UTC)
     await db.insert_push("kyiv_nebo", "ballistic", "inbound", "Ціль на Київ",

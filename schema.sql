@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS devices (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_devices_updated_at ON devices (updated_at);
+DROP INDEX IF EXISTS idx_devices_updated_at;
 
 ALTER TABLE devices DROP COLUMN IF EXISTS region;
 ALTER TABLE devices DROP COLUMN IF EXISTS localities;

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import asyncpg
@@ -29,13 +29,6 @@ class Database:
 
     async def delete_device(self, token: str) -> None:
         await self._pool.execute("DELETE FROM devices WHERE token = $1", token)
-
-    async def purge_stale_devices(self, max_age_days: int = 90) -> int:
-        result = await self._pool.execute(
-            "DELETE FROM devices WHERE updated_at < now() - $1::interval",
-            timedelta(days=max_age_days),
-        )
-        return int(result.split()[-1])
 
     async def tokens(self) -> list[str]:
         rows = await self._pool.fetch("SELECT token FROM devices")
