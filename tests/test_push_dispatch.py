@@ -1,8 +1,10 @@
 from datetime import UTC, datetime
 
+from aioapns import PushType
+
 from app.config import Config
 from app.danger_service import DetectedThreat
-from app.push import PushService, SendOutcome
+from app.push import BACKGROUND_PRIORITY, PushService, SendOutcome
 
 TOKEN_A = "aa" * 32
 TOKEN_B = "bb" * 32
@@ -96,6 +98,59 @@ async def test_mixed_unregistered_and_mismatch_removes_only_the_unregistered():
         SendOutcome(TOKEN_B, False, "BadDeviceToken"),
     ])
     assert removed == [TOKEN_A]
+
+
+def stub_send_one(service: PushService, reason: str | None, captured: list) -> None:
+    async def fake(token, payload, priority, push_type=None):
+        captured.append((token, payload, priority, push_type))
+        return SendOutcome(token, reason is None, reason)
+
+    service._send_one = fake
+    service._apns = object()
+
+
+async def test_unusable_token_reasons_are_rejected_at_registration():
+    for reason in ("BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered"):
+        service, _ = make_service()
+        stub_send_one(service, reason, [])
+        assert await service.token_is_usable(TOKEN_A) is False, reason
+
+
+async def test_accepted_token_is_usable():
+    service, _ = make_service()
+    stub_send_one(service, None, [])
+    assert await service.token_is_usable(TOKEN_A) is True
+
+
+async def test_inconclusive_probe_keeps_the_token():
+    for reason in ("TooManyRequests", "ServiceUnavailable", "InternalServerError", None):
+        service, _ = make_service()
+        captured: list = []
+
+        async def fake(token, payload, priority, push_type=None, _r=reason):
+            captured.append(token)
+            return SendOutcome(token, False, _r)
+
+        service._send_one = fake
+        service._apns = object()
+        assert await service.token_is_usable(TOKEN_A) is True, reason
+
+
+async def test_validation_probe_is_a_silent_background_push():
+    service, _ = make_service()
+    captured: list = []
+    stub_send_one(service, None, captured)
+    await service.token_is_usable(TOKEN_A)
+    _token, payload, priority, push_type = captured[0]
+    assert payload == {"aps": {"content-available": 1}}
+    assert priority == BACKGROUND_PRIORITY
+    assert push_type is PushType.BACKGROUND
+
+
+async def test_token_is_usable_when_apns_is_not_configured():
+    service, _ = make_service()
+    assert service._apns is None
+    assert await service.token_is_usable(TOKEN_A) is True
 
 
 async def test_send_detection_is_a_high_priority_time_sensitive_alert():

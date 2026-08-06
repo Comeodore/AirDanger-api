@@ -49,10 +49,16 @@ CONFIRMED_DEAD_REASON = "Unregistered"
 
 MISMATCH_REASONS = {"BadDeviceToken", "DeviceTokenNotForTopic"}
 
+UNUSABLE_TOKEN_REASONS = MISMATCH_REASONS | {CONFIRMED_DEAD_REASON}
+
 ALERT_SOUND = "alert.caf"
 
 TITLE_LIMIT = 110
 BODY_LIMIT = 178
+
+BACKGROUND_PRIORITY = 5
+
+SILENT_PAYLOAD = {"aps": {"content-available": 1}}
 
 
 @dataclass
@@ -130,6 +136,14 @@ class PushService:
         }
         return await self._fan_out(tokens, payload, priority=10)
 
+    async def token_is_usable(self, token: str) -> bool:
+        if self._apns is None:
+            return True
+        outcome = await self._send_one(
+            token, SILENT_PAYLOAD, BACKGROUND_PRIORITY, PushType.BACKGROUND,
+        )
+        return outcome.reason not in UNUSABLE_TOKEN_REASONS
+
     async def _fan_out(self, tokens: list[str], payload: dict, priority: int) -> int:
         if self._apns is None or not tokens:
             return 0
@@ -157,13 +171,16 @@ class PushService:
                 logger.info("device %s… removed: %s", outcome.token[:8], outcome.reason)
                 await self._on_dead_token(outcome.token)
 
-    async def _send_one(self, token: str, payload: dict, priority: int) -> SendOutcome:
+    async def _send_one(
+        self, token: str, payload: dict, priority: int,
+        push_type: PushType = PushType.ALERT,
+    ) -> SendOutcome:
         try:
             async with self._semaphore:
                 request = NotificationRequest(
                     device_token=token,
                     message=payload,
-                    push_type=PushType.ALERT,
+                    push_type=push_type,
                     priority=priority,
                 )
                 response = await self._apns.send_notification(request)

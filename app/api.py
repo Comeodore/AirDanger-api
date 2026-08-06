@@ -23,17 +23,14 @@ class DeviceRegistration(BaseModel):
 
 @router.post("/devices", dependencies=[Depends(check_api_key)])
 async def register_device(body: DeviceRegistration, request: Request) -> dict:
-    db = _ctx(request).db
+    ctx = _ctx(request)
     token = body.token.lower()
-    await db.upsert_device(token)
-    logger.info("device registered %s… (%d total)", token[:8], len(await db.tokens()))
-    return {"ok": True}
-
-@router.delete("/devices/{token}", dependencies=[Depends(check_api_key)])
-async def unregister_device(token: str, request: Request) -> dict:
-    db = _ctx(request).db
-    await db.delete_device(token.lower())
-    logger.info("device removed %s… (%d left)", token[:8].lower(), len(await db.tokens()))
+    if not await ctx.push.token_is_usable(token):
+        logger.warning("device registration rejected %s…, APNs does not accept this token",
+                       token[:8])
+        raise HTTPException(status_code=400, detail="unknown device token")
+    await ctx.db.upsert_device(token)
+    logger.info("device registered %s… (%d total)", token[:8], len(await ctx.db.tokens()))
     return {"ok": True}
 
 @router.get("/health")
