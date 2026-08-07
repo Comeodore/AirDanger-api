@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.config import Config
-from app.ingest import Ingest, parse_messages, stop, strip_html
+from app.ingest import Ingest, parse_messages, strip_html
 
 CHANNEL = "kyiv_nebo"
 
@@ -111,7 +111,8 @@ class Harness:
         return self
 
     async def __aexit__(self, *exc) -> None:
-        await stop(self._task)
+        self._task.cancel()
+        await asyncio.gather(self._task, return_exceptions=True)
 
 
 @pytest.fixture
@@ -197,14 +198,28 @@ async def test_a_message_the_pipeline_choked_on_is_retried(http):
 async def test_health_is_green_while_the_page_yields_messages(http):
     async with Harness(make_config()) as h:
         assert h.ingest.connected
-        assert h.ingest.source == "preview"
 
 
 async def test_health_goes_red_when_the_page_stops_yielding_messages(http):
     async with Harness(make_config()) as h:
         http.body = "<html><body>markup changed</body></html>"
         await until(lambda: not h.ingest.connected)
-        assert h.ingest.source is None
+
+
+async def test_a_burst_of_failures_logs_once_and_reports_on_recovery(http, caplog):
+    async with Harness(make_config()) as h:
+        with caplog.at_level("INFO"):
+            http.status = 503
+            hits = http.hits
+            await until(lambda: http.hits >= hits + 5)
+            warnings = [r for r in caplog.records if "poll failed" in r.message]
+            assert len(warnings) == 1
+
+            http.status = 200
+            await until(lambda: any("polling recovered after" in r.message
+                                    for r in caplog.records))
+            recovery = next(r for r in caplog.records if "polling recovered after" in r.message)
+            assert "failed poll(s)" in recovery.message
 
 
 async def test_health_goes_red_when_the_page_stops_answering(http):
@@ -246,25 +261,6 @@ async def test_the_page_breaking_a_second_time_is_reported_again(http, monkeypat
             http.body = broken
             await until(lambda: sum("markup has probably changed" in r.message
                                     for r in caplog.records) == 2)
-
-
-async def test_the_latency_log_records_every_message_with_its_lag(http, tmp_path):
-    path = tmp_path / "latency.tsv"
-    async with Harness(make_config(latency_log=str(path))) as h:
-        http.body = page([(101, "Балістика")])
-        await until(lambda: len(h.received) == 1)
-        rows = [line.split("\t") for line in path.read_text().splitlines()]
-    assert [r[2] for r in rows] == ["101"]
-    assert float(rows[0][4]) < 5.0
-    assert rows[0][5] == "preview"
-
-
-async def test_no_latency_log_is_written_when_it_is_not_configured(http, tmp_path):
-    path = tmp_path / "latency.tsv"
-    async with Harness(make_config()) as h:
-        http.body = page([(101, "Балістика")])
-        await until(lambda: len(h.received) == 1)
-    assert not path.exists()
 
 
 async def test_polling_keeps_to_its_interval(http):

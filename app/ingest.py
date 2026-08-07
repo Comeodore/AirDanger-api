@@ -18,6 +18,8 @@ MessageHandler = Callable[[str, str, datetime], Awaitable[None]]
 
 SEEN_LIMIT = 200
 BLIND_WARN_SEC = 60.0
+CONNECT_TIMEOUT = 3.0
+READ_TIMEOUT = 5.0
 
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
 
@@ -29,10 +31,6 @@ _TIME_RE = re.compile(r'<time datetime="([^"]+)"')
 _BR_RE = re.compile(r"<br\s*/?>", re.I)
 _TAG_RE = re.compile(r"<[^>]+>")
 
-
-async def stop(task: asyncio.Task) -> None:
-    task.cancel()
-    await asyncio.gather(task, return_exceptions=True)
 
 def strip_html(fragment: str) -> str:
     fragment = _BR_RE.sub("\n", fragment)
@@ -68,11 +66,9 @@ class Ingest:
         self._last_ok = 0.0
         self._blind_since: float | None = None
         self._warned_blind = False
+        self._failures = 0
+        self._failing_since = 0.0
         self.last_message_at: dict[str, float] = {}
-
-    @property
-    def source(self) -> str | None:
-        return "preview" if self.connected else None
 
     @property
     def connected(self) -> bool:
@@ -88,8 +84,9 @@ class Ingest:
         channels = self._config.channels
         interval = self._config.poll_sec
         logger.info("polling t.me/s every %.1fs: %s", interval, ", ".join(channels))
+        timeout = httpx.Timeout(READ_TIMEOUT, connect=CONNECT_TIMEOUT)
         async with httpx.AsyncClient(
-            headers={"User-Agent": USER_AGENT}, timeout=8.0, follow_redirects=True,
+            headers={"User-Agent": USER_AGENT}, timeout=timeout, follow_redirects=True,
         ) as client:
             async with asyncio.TaskGroup() as tg:
                 for i, channel in enumerate(channels):
@@ -116,7 +113,7 @@ class Ingest:
             if not messages:
                 self._note_blind(channel, len(response.text))
                 return
-            self._see()
+            self._see(channel)
             ids = [msg_id for msg_id, _, _ in messages]
             if self.seed(channel, ids):
                 logger.info("watching %s from message %d", channel, max(ids))
@@ -124,14 +121,25 @@ class Ingest:
             for msg_id, text, ts in messages:
                 await self.deliver(channel, msg_id, text, ts or datetime.now(UTC))
         except httpx.HTTPError as exc:
-            logger.warning("poll failed for %s: %r", channel, exc)
-        except Exception:
-            logger.warning("poll failed for %s", channel, exc_info=True)
+            self._note_failure(channel, repr(exc))
+        except Exception as exc:
+            self._note_failure(channel, repr(exc))
 
-    def _see(self) -> None:
+    def _see(self, channel: str) -> None:
+        if self._failures:
+            logger.info("%s: polling recovered after %d failed poll(s) over %.0fs",
+                        channel, self._failures, time.time() - self._failing_since)
+            self._failures = 0
         self._last_ok = time.time()
         self._blind_since = None
         self._warned_blind = False
+
+    def _note_failure(self, channel: str, detail: str) -> None:
+        self._failures += 1
+        if self._failures == 1:
+            self._failing_since = time.time()
+            logger.warning("poll failed for %s: %s (further failures logged on recovery)",
+                           channel, detail)
 
     def _note_blind(self, channel: str, page_bytes: int) -> None:
         now = time.time()
@@ -155,8 +163,6 @@ class Ingest:
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=UTC)
             age = (datetime.now(UTC) - ts).total_seconds()
-            if text:
-                self._measure(channel, msg_id, ts, age)
             if not text or age > self._config.max_age_sec:
                 if text:
                     logger.info("%s: message %d skipped, %.0fs old", channel, msg_id, age)
@@ -170,13 +176,3 @@ class Ingest:
                                  channel, msg_id)
                 return
             seen.append(msg_id)
-
-    def _measure(self, channel: str, msg_id: int, ts: datetime, lag: float) -> None:
-        if not self._config.latency_log:
-            return
-        try:
-            with open(self._config.latency_log, "a") as log:
-                log.write(f"{datetime.now(UTC).isoformat()}\t{channel}\t{msg_id}\t"
-                          f"{ts.isoformat()}\t{lag:.2f}\tpreview\n")
-        except OSError:
-            logger.warning("could not write %s", self._config.latency_log, exc_info=True)

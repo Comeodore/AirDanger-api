@@ -1,5 +1,4 @@
 import base64
-import json
 import os
 import tempfile
 from dataclasses import dataclass, field
@@ -14,11 +13,6 @@ def _bool(name: str, default: bool = False) -> bool:
 def _parse_channels(raw: str | None) -> list[str]:
     if not raw:
         return list(DEFAULT_CHANNELS)
-    raw = raw.strip()
-    if raw.startswith("{"):
-        return list(json.loads(raw).keys())
-    if raw.startswith("["):
-        return list(json.loads(raw))
     return [c.strip() for c in raw.split(",") if c.strip()]
 
 @dataclass
@@ -38,7 +32,6 @@ class Config:
     poll_sec: float
     max_age_sec: float
     health_window_sec: float
-    latency_log: str | None = None
     context_ttl_min: int = 20
     _apns_key_path: str | None = field(default=None, repr=False)
 
@@ -67,7 +60,6 @@ class Config:
             health_window_sec=float(
                 os.environ.get("HEALTH_WINDOW_SEC") or max(30.0, poll_sec * 10)
             ),
-            latency_log=os.environ.get("LATENCY_LOG") or None,
             context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
         )
 

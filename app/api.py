@@ -40,7 +40,6 @@ async def health(request: Request) -> dict:
     return {
         "status": "ok",
         "connected": ctx.ingest.connected if ctx.ingest else False,
-        "source": ctx.ingest.source if ctx.ingest else None,
         "channels": {
             channel: (
                 round(now - ctx.ingest.last_message_at[channel])
