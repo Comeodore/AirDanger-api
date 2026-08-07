@@ -15,7 +15,7 @@ ssh_do "mkdir -p $REMOTE_DIR $REMOTE_DIR/logs && chown 1000:1000 $REMOTE_DIR/log
 echo "==> rsync code -> $REMOTE_DIR (secrets & vcs excluded)"
 rsync -az --delete -e "ssh -p $SSH_PORT" \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
-  --exclude '.env*' --exclude '*.session' --exclude 'scripts/.login.json' \
+  --exclude '.env*' --exclude '*.session' \
   --exclude 'logs' \
   ./ "$HOST:$REMOTE_DIR/"
 

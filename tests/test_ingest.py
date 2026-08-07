@@ -1,8 +1,6 @@
 import asyncio
 import time
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 
 import pytest
 
@@ -11,7 +9,7 @@ from app.ingest import Ingest, parse_messages, stop, strip_html
 
 CHANNEL = "kyiv_nebo"
 
-PREVIEW_PAGE = """
+SAMPLE = """
 <div class="tgme_widget_message_wrap">
  <div class="tgme_widget_message" data-post="kyiv_nebo/101">
   <div class="tgme_widget_message_text js-message_text" dir="auto">
@@ -43,69 +41,50 @@ def make_config(**overrides) -> Config:
         apns_topic="t", apns_sandbox=True, api_key=None,
         critical_alerts=False, push_cooldown_sec=120, push_warnings=False,
         push_types=frozenset({"ballistic", "irbm"}),
-        tg_api_id=1, tg_api_hash="hash", tg_session="session",
-        catchup_sec=0.02, catchup_max_age_sec=300.0,
-        fallback_after_sec=0.05, preview_poll_sec=0.02,
+        poll_sec=0.02, max_age_sec=300.0, health_window_sec=0.2,
         context_ttl_min=20,
     )
     values.update(overrides)
     return Config(**values)
 
 
-@dataclass
-class FakeMessage:
-    id: int
-    message: str
-    date: datetime = field(default_factory=lambda: datetime.now(UTC))
+def page(rows: list[tuple[int, str]], fresh: bool = True) -> str:
+    when = datetime.now(UTC) if fresh else datetime.now(UTC) - timedelta(hours=1)
+    return "".join(
+        f'<div class="tgme_widget_message" data-post="kyiv_nebo/{msg_id}">'
+        f'<div class="tgme_widget_message_text js-message_text">{text}</div>'
+        f'<time datetime="{when.isoformat()}"></time></div>'
+        for msg_id, text in rows
+    )
 
 
-class FakeClient:
-    def __init__(self, history: list[FakeMessage]) -> None:
-        self.history = history
-        self.handlers: list = []
-        self.requests: list = []
-        self.authorized = True
-        self.fetch_fails = False
-        self.disconnected = asyncio.Event()
-        self._connected = False
+class FakeResponse:
+    def __init__(self, body: str, status: int = 200) -> None:
+        self.text = body
+        self.status = status
 
-    async def connect(self) -> None:
-        self._connected = True
+    def raise_for_status(self) -> None:
+        if self.status != 200:
+            raise RuntimeError(f"HTTP {self.status}")
 
-    async def disconnect(self) -> None:
-        self._connected = False
-        self.disconnected.set()
 
-    def is_connected(self) -> bool:
-        return self._connected
+class FakeHTTP:
+    body = ""
+    status = 200
+    hits = 0
 
-    async def is_user_authorized(self) -> bool:
-        return self.authorized
+    def __init__(self, *args, **kwargs) -> None:
+        pass
 
-    async def get_me(self):
-        return SimpleNamespace(username="tester", phone="+380", id=42)
+    async def __aenter__(self) -> "FakeHTTP":
+        return self
 
-    async def get_entity(self, name: str) -> str:
-        return name
+    async def __aexit__(self, *exc) -> None:
+        pass
 
-    async def __call__(self, request):
-        self.requests.append(request)
-
-    async def get_messages(self, entity, limit: int) -> list[FakeMessage]:
-        if self.fetch_fails:
-            raise ConnectionError("fetch is broken")
-        return sorted(self.history, key=lambda m: m.id, reverse=True)[:limit]
-
-    def add_event_handler(self, callback, event) -> None:
-        self.handlers.append(callback)
-
-    async def run_until_disconnected(self) -> None:
-        await self.disconnected.wait()
-
-    async def fire(self, message: FakeMessage) -> None:
-        self.history.append(message)
-        for callback in self.handlers:
-            await callback(SimpleNamespace(message=message))
+    async def get(self, url: str) -> FakeResponse:
+        FakeHTTP.hits += 1
+        return FakeResponse(FakeHTTP.body, FakeHTTP.status)
 
 
 async def until(predicate, timeout: float = 2.0) -> None:
@@ -118,10 +97,9 @@ async def until(predicate, timeout: float = 2.0) -> None:
 
 
 class Harness:
-    def __init__(self, history: list[FakeMessage], config: Config) -> None:
-        self.client = FakeClient(history)
+    def __init__(self, config: Config) -> None:
         self.received: list[tuple[str, str, datetime]] = []
-        self.ingest = Ingest(config, self._on_message, client_factory=lambda: self.client)
+        self.ingest = Ingest(config, self._on_message)
         self._task: asyncio.Task | None = None
 
     async def _on_message(self, source: str, text: str, ts: datetime) -> None:
@@ -129,24 +107,24 @@ class Harness:
 
     async def __aenter__(self) -> "Harness":
         self._task = asyncio.create_task(self.ingest.run())
-        await until(lambda: bool(self.client.handlers))
+        await until(lambda: CHANNEL in self.ingest._seen)
         return self
 
     async def __aexit__(self, *exc) -> None:
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
+        await stop(self._task)
 
 
 @pytest.fixture
-def history() -> list[FakeMessage]:
-    return [FakeMessage(id=i, message=f"старе {i}") for i in (98, 99, 100)]
+def http(monkeypatch):
+    FakeHTTP.body = page([(98, "старе 98"), (99, "старе 99"), (100, "старе 100")])
+    FakeHTTP.status = 200
+    FakeHTTP.hits = 0
+    monkeypatch.setattr("app.ingest.httpx.AsyncClient", FakeHTTP)
+    return FakeHTTP
 
 
-def test_preview_parsing_extracts_ids_text_and_time():
-    messages = parse_messages(PREVIEW_PAGE)
+def test_parsing_extracts_ids_text_and_time():
+    messages = parse_messages(SAMPLE)
     assert [m[0] for m in messages] == [101, 103]
     assert "Балістика на Київ!" in messages[0][1]
     assert "\n\nПрямуйте в укриття & чекайте" in messages[0][1]
@@ -158,223 +136,50 @@ def test_strip_html_keeps_emoji_and_plain_text():
     assert strip_html('🛵 <i class="emoji"><b>⚡</b></i> шахед') == "🛵 ⚡ шахед"
 
 
-async def test_cold_start_does_not_replay_history(history):
-    async with Harness(history, make_config()) as h:
-        await asyncio.sleep(0.1)
+def test_markup_without_message_blocks_parses_to_nothing():
+    assert parse_messages("<html><body>nothing here</body></html>") == []
+
+
+async def test_cold_start_does_not_replay_what_is_already_on_the_page(http):
+    async with Harness(make_config()) as h:
+        hits = http.hits
+        await until(lambda: http.hits >= hits + 3)
         assert h.received == []
 
 
-async def test_channel_is_joined_on_start(history):
-    async with Harness(history, make_config()) as h:
-        assert [type(r).__name__ for r in h.client.requests] == ["JoinChannelRequest"]
-
-
-async def test_live_message_is_delivered(history):
-    async with Harness(history, make_config()) as h:
-        ts = datetime.now(UTC)
-        await h.client.fire(FakeMessage(id=101, message="Балістика на Київ", date=ts))
-        assert h.received == [(CHANNEL, "Балістика на Київ", ts)]
-
-
-async def test_live_message_is_not_redelivered_by_catchup(history):
-    async with Harness(history, make_config()) as h:
-        await h.client.fire(FakeMessage(id=101, message="Балістика на Київ"))
-        await asyncio.sleep(0.1)
-        assert len(h.received) == 1
-
-
-async def test_repeated_update_for_one_message_is_delivered_once(history):
-    async with Harness(history, make_config()) as h:
-        message = FakeMessage(id=101, message="Балістика на Київ")
-        await h.client.fire(message)
-        await h.client.fire(message)
-        assert len(h.received) == 1
-
-
-async def test_catchup_recovers_a_message_updates_missed(history):
-    async with Harness(history, make_config()) as h:
-        history.append(FakeMessage(id=101, message="Циркони"))
-        await until(lambda: len(h.received) == 1)
-        assert h.received[0][1] == "Циркони"
-
-
-async def test_catchup_delivers_missed_messages_in_order(history):
-    async with Harness(history, make_config()) as h:
-        history.append(FakeMessage(id=102, message="друге"))
-        history.append(FakeMessage(id=101, message="перше"))
-        await until(lambda: len(h.received) == 2)
-        assert [m[1] for m in h.received] == ["перше", "друге"]
-
-
-async def test_stale_message_is_skipped(history):
-    async with Harness(history, make_config()) as h:
-        old = datetime.now(UTC) - timedelta(minutes=30)
-        await h.client.fire(FakeMessage(id=101, message="Балістика", date=old))
-        await asyncio.sleep(0.1)
-        assert h.received == []
-
-
-async def test_message_within_max_age_is_delivered(history):
-    async with Harness(history, make_config()) as h:
-        recent = datetime.now(UTC) - timedelta(minutes=2)
-        await h.client.fire(FakeMessage(id=101, message="Балістика", date=recent))
-        assert len(h.received) == 1
-
-
-async def test_media_without_caption_is_skipped(history):
-    async with Harness(history, make_config()) as h:
-        await h.client.fire(FakeMessage(id=101, message=""))
-        await asyncio.sleep(0.1)
-        assert h.received == []
-
-
-async def test_naive_timestamp_is_treated_as_utc(history):
-    async with Harness(history, make_config()) as h:
-        naive = datetime.now(UTC).replace(tzinfo=None)
-        await h.client.fire(FakeMessage(id=101, message="Балістика", date=naive))
-        assert h.received[0][2].tzinfo is UTC
-
-
-async def test_health_reports_mtproto_while_running(history):
-    async with Harness(history, make_config()) as h:
-        assert h.ingest.source == "mtproto"
-        assert h.ingest.last_message_at == {}
-        await h.client.fire(FakeMessage(id=101, message="Балістика"))
-        assert CHANNEL in h.ingest.last_message_at
-
-
-async def test_health_reports_nothing_after_the_client_drops(history):
-    async with Harness(history, make_config(fallback_after_sec=1000.0)) as h:
-        await h.client.disconnect()
-        await until(lambda: h.ingest.source is None)
-        assert not h.ingest.connected
-
-
-async def test_reconnect_keeps_the_cursor_and_recovers_the_gap(history, monkeypatch):
-    monkeypatch.setattr("app.ingest.RESTART_DELAY", 0.02)
-    async with Harness(history, make_config(catchup_sec=100.0)) as h:
-        history.append(FakeMessage(id=101, message="під час розриву"))
-        await asyncio.sleep(0.05)
-        assert h.received == []
-        h.ingest.listener._client_factory = lambda: FakeClient(history)
-        await h.client.disconnect()
-        await until(lambda: len(h.received) == 1)
-        assert h.received[0][1] == "під час розриву"
-
-
-async def test_unauthorised_session_does_not_crash_the_task(history):
-    client = FakeClient(history)
-    client.authorized = False
-    ingest = Ingest(
-        make_config(fallback_after_sec=1000.0),
-        lambda *a: asyncio.sleep(0),
-        client_factory=lambda: client,
-    )
-    task = asyncio.create_task(ingest.run())
-    await asyncio.sleep(0.1)
-    assert not task.done()
-    assert not ingest.connected
-    await stop(task)
-
-
-class FakePreviewResponse:
-    def __init__(self, page: str) -> None:
-        self.text = page
-
-    def raise_for_status(self) -> None:
-        pass
-
-
-class FakeHTTP:
-    pages: list[str] = []
-
-    def __init__(self, *args, **kwargs) -> None:
-        pass
-
-    async def __aenter__(self) -> "FakeHTTP":
-        return self
-
-    async def __aexit__(self, *exc) -> None:
-        pass
-
-    async def get(self, url: str) -> FakePreviewResponse:
-        return FakePreviewResponse(FakeHTTP.pages[-1])
-
-
-def preview_page(rows: list[tuple[int, str]]) -> str:
-    now = datetime.now(UTC).isoformat()
-    return "".join(
-        f'<div class="tgme_widget_message" data-post="kyiv_nebo/{msg_id}">'
-        f'<div class="tgme_widget_message_text js-message_text">{text}</div>'
-        f'<time datetime="{now}"></time></div>'
-        for msg_id, text in rows
-    )
-
-
-@pytest.fixture
-def preview(monkeypatch):
-    FakeHTTP.pages = [preview_page([(98, "старе 98"), (99, "старе 99"), (100, "старе 100")])]
-    monkeypatch.setattr("app.ingest.httpx.AsyncClient", FakeHTTP)
-    return FakeHTTP
-
-
-async def test_fallback_starts_when_mtproto_stays_down(history, preview, monkeypatch):
-    monkeypatch.setattr("app.ingest.RESTART_DELAY", 1000.0)
-    monkeypatch.setattr("app.ingest.HEALTH_CHECK_SEC", 0.01)
-    async with Harness(history, make_config()) as h:
-        await h.client.disconnect()
-        await until(lambda: h.ingest.source == "preview")
-        preview.pages.append(preview_page([(101, "Балістика на Київ")]))
+async def test_a_new_message_is_delivered(http):
+    async with Harness(make_config()) as h:
+        http.body = page([(100, "старе 100"), (101, "Балістика на Київ")])
         await until(lambda: len(h.received) == 1)
         assert h.received[0][1] == "Балістика на Київ"
 
 
-async def test_fallback_does_not_start_while_mtproto_is_healthy(history, preview, monkeypatch):
-    monkeypatch.setattr("app.ingest.HEALTH_CHECK_SEC", 0.01)
-    async with Harness(history, make_config()) as h:
-        await asyncio.sleep(0.2)
-        assert h.ingest.source == "mtproto"
-        preview.pages.append(preview_page([(101, "Балістика на Київ")]))
-        await asyncio.sleep(0.1)
+async def test_a_message_is_delivered_only_once(http):
+    async with Harness(make_config()) as h:
+        http.body = page([(101, "Балістика на Київ")])
+        await until(lambda: len(h.received) == 1)
+        hits = http.hits
+        await until(lambda: http.hits >= hits + 3)
+        assert len(h.received) == 1
+
+
+async def test_messages_are_delivered_in_order(http):
+    async with Harness(make_config()) as h:
+        http.body = page([(102, "друге"), (101, "перше")])
+        await until(lambda: len(h.received) == 2)
+        assert [m[1] for m in h.received] == ["перше", "друге"]
+
+
+async def test_a_stale_message_is_skipped(http):
+    async with Harness(make_config()) as h:
+        http.body = page([(101, "Балістика")], fresh=False)
+        hits = http.hits
+        await until(lambda: http.hits >= hits + 3)
         assert h.received == []
 
 
-async def test_fallback_does_not_redeliver_what_mtproto_already_sent(
-    history, preview, monkeypatch,
-):
-    monkeypatch.setattr("app.ingest.RESTART_DELAY", 1000.0)
-    monkeypatch.setattr("app.ingest.HEALTH_CHECK_SEC", 0.01)
-    async with Harness(history, make_config()) as h:
-        await h.client.fire(FakeMessage(id=101, message="Балістика на Київ"))
-        assert len(h.received) == 1
-        await h.client.disconnect()
-        await until(lambda: h.ingest.source == "preview")
-        preview.pages.append(preview_page([(101, "Балістика на Київ")]))
-        await asyncio.sleep(0.15)
-        assert len(h.received) == 1
-
-
-async def test_the_latency_log_records_every_message_with_its_lag(history, tmp_path):
-    path = tmp_path / "latency.tsv"
-    async with Harness(history, make_config(latency_log=str(path))) as h:
-        posted = datetime.now(UTC) - timedelta(seconds=3)
-        await h.client.fire(FakeMessage(id=101, message="Балістика", date=posted))
-        await h.client.fire(FakeMessage(id=102, message=""))
-        rows = [line.split("\t") for line in path.read_text().splitlines()]
-    assert [r[2] for r in rows] == ["101"]
-    assert 2.5 <= float(rows[0][4]) <= 4.0
-    assert rows[0][5] == "mtproto"
-
-
-async def test_no_latency_log_is_written_when_it_is_not_configured(history, tmp_path):
-    path = tmp_path / "latency.tsv"
-    async with Harness(history, make_config()) as h:
-        await h.client.fire(FakeMessage(id=101, message="Балістика"))
-    assert not path.exists()
-
-
-async def test_a_message_the_pipeline_choked_on_is_retried(history):
-    async with Harness(history, make_config()) as h:
+async def test_a_message_the_pipeline_choked_on_is_retried(http):
+    async with Harness(make_config()) as h:
         failures = []
         original = h.ingest._on_message
 
@@ -385,50 +190,85 @@ async def test_a_message_the_pipeline_choked_on_is_retried(history):
             await original(source, text, ts)
 
         h.ingest._on_message = flaky
-        await h.client.fire(FakeMessage(id=101, message="Балістика на Київ"))
-        assert h.received == []
-        await until(lambda: len(h.received) == 1)
-        assert h.received[0][1] == "Балістика на Київ"
-
-
-async def test_a_failing_pipeline_does_not_blame_the_source(history):
-    async with Harness(history, make_config(fallback_after_sec=1000.0)) as h:
-        async def always_fails(source, text, ts):
-            raise ConnectionError("database is down")
-
-        h.ingest._on_message = always_fails
-        await h.client.fire(FakeMessage(id=101, message="Балістика на Київ"))
-        await asyncio.sleep(0.1)
-        assert h.ingest.source == "mtproto"
-
-
-async def test_a_stalled_connection_is_reported_unhealthy_at_once(history):
-    async with Harness(history, make_config(fallback_after_sec=1000.0)) as h:
-        assert h.ingest.source == "mtproto"
-        h.client.fetch_fails = True
-        await until(lambda: h.ingest.source is None)
-        assert h.client.is_connected()
-
-
-async def test_a_stall_hands_over_to_the_fallback(history, preview, monkeypatch):
-    monkeypatch.setattr("app.ingest.HEALTH_CHECK_SEC", 0.01)
-    async with Harness(history, make_config()) as h:
-        h.client.fetch_fails = True
-        await until(lambda: h.ingest.source == "preview")
-        preview.pages.append(preview_page([(101, "Балістика на Київ")]))
+        http.body = page([(101, "Балістика на Київ")])
         await until(lambda: len(h.received) == 1)
 
 
-async def test_fallback_stops_once_mtproto_recovers(history, preview, monkeypatch):
-    monkeypatch.setattr("app.ingest.RESTART_DELAY", 0.02)
-    monkeypatch.setattr("app.ingest.HEALTH_CHECK_SEC", 0.01)
-    async with Harness(history, make_config()) as h:
-        broken = FakeClient(history)
-        broken.authorized = False
-        h.ingest.listener._client_factory = lambda: broken
-        await h.client.disconnect()
-        await until(lambda: h.ingest.source == "preview")
+async def test_health_is_green_while_the_page_yields_messages(http):
+    async with Harness(make_config()) as h:
+        assert h.ingest.connected
+        assert h.ingest.source == "preview"
 
-        h.ingest.listener._client_factory = lambda: FakeClient(history)
-        await until(lambda: h.ingest.source == "mtproto")
-        await until(lambda: h.ingest._poller_task is None)
+
+async def test_health_goes_red_when_the_page_stops_yielding_messages(http):
+    async with Harness(make_config()) as h:
+        http.body = "<html><body>markup changed</body></html>"
+        await until(lambda: not h.ingest.connected)
+        assert h.ingest.source is None
+
+
+async def test_health_goes_red_when_the_page_stops_answering(http):
+    async with Harness(make_config()) as h:
+        http.status = 503
+        await until(lambda: not h.ingest.connected)
+
+
+async def test_a_broken_page_is_reported_once_it_has_lasted(http, monkeypatch, caplog):
+    monkeypatch.setattr("app.ingest.BLIND_WARN_SEC", 0.05)
+    async with Harness(make_config()) as h:
+        http.body = "<html><body>markup changed</body></html>"
+        with caplog.at_level("ERROR"):
+            await until(lambda: any("markup has probably changed" in r.message
+                                    for r in caplog.records))
+
+
+async def test_recovery_after_a_broken_page_turns_health_green_again(http, monkeypatch):
+    monkeypatch.setattr("app.ingest.BLIND_WARN_SEC", 0.05)
+    async with Harness(make_config()) as h:
+        http.body = "<html><body>markup changed</body></html>"
+        await until(lambda: not h.ingest.connected)
+        http.body = page([(100, "старе 100")])
+        await until(lambda: h.ingest.connected)
+
+
+async def test_the_page_breaking_a_second_time_is_reported_again(http, monkeypatch, caplog):
+    monkeypatch.setattr("app.ingest.BLIND_WARN_SEC", 0.05)
+    broken = "<html><body>markup changed</body></html>"
+    healthy = page([(100, "старе 100")])
+    async with Harness(make_config()) as h:
+        with caplog.at_level("ERROR"):
+            http.body = broken
+            await until(lambda: sum("markup has probably changed" in r.message
+                                    for r in caplog.records) == 1)
+            http.body = healthy
+            hits = http.hits
+            await until(lambda: http.hits >= hits + 3 and h.ingest.connected)
+            http.body = broken
+            await until(lambda: sum("markup has probably changed" in r.message
+                                    for r in caplog.records) == 2)
+
+
+async def test_the_latency_log_records_every_message_with_its_lag(http, tmp_path):
+    path = tmp_path / "latency.tsv"
+    async with Harness(make_config(latency_log=str(path))) as h:
+        http.body = page([(101, "Балістика")])
+        await until(lambda: len(h.received) == 1)
+        rows = [line.split("\t") for line in path.read_text().splitlines()]
+    assert [r[2] for r in rows] == ["101"]
+    assert float(rows[0][4]) < 5.0
+    assert rows[0][5] == "preview"
+
+
+async def test_no_latency_log_is_written_when_it_is_not_configured(http, tmp_path):
+    path = tmp_path / "latency.tsv"
+    async with Harness(make_config()) as h:
+        http.body = page([(101, "Балістика")])
+        await until(lambda: len(h.received) == 1)
+    assert not path.exists()
+
+
+async def test_polling_keeps_to_its_interval(http):
+    async with Harness(make_config(poll_sec=0.3)) as h:
+        http.hits = 0
+        await asyncio.sleep(1.2)
+        assert 3 <= http.hits <= 6

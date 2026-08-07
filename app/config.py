@@ -35,19 +35,16 @@ class Config:
     push_cooldown_sec: int
     push_warnings: bool
     push_types: frozenset[str]
-    tg_api_id: int
-    tg_api_hash: str
-    tg_session: str
-    catchup_sec: float
-    catchup_max_age_sec: float
-    fallback_after_sec: float
-    preview_poll_sec: float
+    poll_sec: float
+    max_age_sec: float
+    health_window_sec: float
     latency_log: str | None = None
     context_ttl_min: int = 20
     _apns_key_path: str | None = field(default=None, repr=False)
 
     @classmethod
     def from_env(cls) -> "Config":
+        poll_sec = float(os.environ.get("POLL_SEC") or 2)
         return cls(
             channels=_parse_channels(os.environ.get("CHANNELS")),
             database_url=os.environ["DATABASE_URL"],
@@ -65,13 +62,11 @@ class Config:
                 for t in (os.environ.get("PUSH_TYPES") or "ballistic,irbm").split(",")
                 if t.strip()
             ),
-            tg_api_id=int(os.environ.get("TG_API_ID") or 0),
-            tg_api_hash=os.environ.get("TG_API_HASH", ""),
-            tg_session=os.environ.get("TG_SESSION", ""),
-            catchup_sec=float(os.environ.get("TG_CATCHUP_SEC") or 30),
-            catchup_max_age_sec=float(os.environ.get("TG_MAX_AGE_SEC") or 300),
-            fallback_after_sec=float(os.environ.get("FALLBACK_AFTER_SEC") or 20),
-            preview_poll_sec=float(os.environ.get("POLL_SEC") or 5),
+            poll_sec=poll_sec,
+            max_age_sec=float(os.environ.get("MAX_AGE_SEC") or 300),
+            health_window_sec=float(
+                os.environ.get("HEALTH_WINDOW_SEC") or max(30.0, poll_sec * 10)
+            ),
             latency_log=os.environ.get("LATENCY_LOG") or None,
             context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
         )
@@ -79,10 +74,6 @@ class Config:
     @property
     def apns_configured(self) -> bool:
         return bool(self.apns_key_p8_b64 and self.apns_key_id and self.apns_team_id)
-
-    @property
-    def tg_configured(self) -> bool:
-        return bool(self.tg_api_id and self.tg_api_hash and self.tg_session)
 
     def apns_key_path(self) -> str:
         if self._apns_key_path is None:

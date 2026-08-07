@@ -27,9 +27,7 @@ def make_service() -> tuple[PushService, list[str]]:
         apns_topic="comeodore.airdanger", apns_sandbox=False, api_key=None,
         critical_alerts=False, push_cooldown_sec=120, push_warnings=False,
         push_types=frozenset({"ballistic", "irbm"}),
-        tg_api_id=1, tg_api_hash="hash", tg_session="session",
-        catchup_sec=60.0, catchup_max_age_sec=300.0,
-        fallback_after_sec=180.0, preview_poll_sec=5.0,
+        poll_sec=5.0, max_age_sec=300.0, health_window_sec=60.0,
     )
     return PushService(config, on_dead_token=on_dead), removed
 

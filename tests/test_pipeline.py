@@ -18,9 +18,7 @@ def make_config(push_warnings: bool = False) -> Config:
         push_cooldown_sec=120,
         push_warnings=push_warnings,
         push_types=frozenset({"ballistic", "irbm"}),
-        tg_api_id=1, tg_api_hash="hash", tg_session="session",
-        catchup_sec=60.0, catchup_max_age_sec=300.0,
-        fallback_after_sec=180.0, preview_poll_sec=5.0,
+        poll_sec=5.0, max_age_sec=300.0, health_window_sec=60.0,
         context_ttl_min=20,
     )
 
