@@ -65,6 +65,7 @@ class FakeClient:
         self.handlers: list = []
         self.requests: list = []
         self.authorized = True
+        self.fetch_fails = False
         self.disconnected = asyncio.Event()
         self._connected = False
 
@@ -91,6 +92,8 @@ class FakeClient:
         self.requests.append(request)
 
     async def get_messages(self, entity, limit: int) -> list[FakeMessage]:
+        if self.fetch_fails:
+            raise ConnectionError("fetch is broken")
         return sorted(self.history, key=lambda m: m.id, reverse=True)[:limit]
 
     def add_event_handler(self, callback, event) -> None:
@@ -349,6 +352,23 @@ async def test_fallback_does_not_redeliver_what_mtproto_already_sent(
         preview.pages.append(preview_page([(101, "Балістика на Київ")]))
         await asyncio.sleep(0.15)
         assert len(h.received) == 1
+
+
+async def test_a_stalled_connection_is_reported_unhealthy_at_once(history):
+    async with Harness(history, make_config(fallback_after_sec=1000.0)) as h:
+        assert h.ingest.source == "mtproto"
+        h.client.fetch_fails = True
+        await until(lambda: h.ingest.source is None)
+        assert h.client.is_connected()
+
+
+async def test_a_stall_hands_over_to_the_fallback(history, preview, monkeypatch):
+    monkeypatch.setattr("app.ingest.HEALTH_CHECK_SEC", 0.01)
+    async with Harness(history, make_config()) as h:
+        h.client.fetch_fails = True
+        await until(lambda: h.ingest.source == "preview")
+        preview.pages.append(preview_page([(101, "Балістика на Київ")]))
+        await until(lambda: len(h.received) == 1)
 
 
 async def test_fallback_stops_once_mtproto_recovers(history, preview, monkeypatch):

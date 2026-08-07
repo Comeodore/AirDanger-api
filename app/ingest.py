@@ -154,7 +154,9 @@ class TelegramListener:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.warning("mtproto catch-up failed", exc_info=True)
+                self._last_ok = 0.0
+                logger.warning("mtproto catch-up failed, source marked unhealthy",
+                               exc_info=True)
 
     async def _ingest(self, channel: str, messages: list, via: str) -> None:
         ids = [message.id for message in messages]

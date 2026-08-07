@@ -67,9 +67,9 @@ class Config:
             tg_api_id=int(os.environ.get("TG_API_ID") or 0),
             tg_api_hash=os.environ.get("TG_API_HASH", ""),
             tg_session=os.environ.get("TG_SESSION", ""),
-            catchup_sec=float(os.environ.get("TG_CATCHUP_SEC") or 60),
+            catchup_sec=float(os.environ.get("TG_CATCHUP_SEC") or 30),
             catchup_max_age_sec=float(os.environ.get("TG_MAX_AGE_SEC") or 300),
-            fallback_after_sec=float(os.environ.get("FALLBACK_AFTER_SEC") or 180),
+            fallback_after_sec=float(os.environ.get("FALLBACK_AFTER_SEC") or 20),
             preview_poll_sec=float(os.environ.get("POLL_SEC") or 5),
             context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
         )
