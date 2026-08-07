@@ -278,6 +278,8 @@ class Ingest:
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=UTC)
             age = (datetime.now(UTC) - ts).total_seconds()
+            if text:
+                self._measure(channel, msg_id, ts, age, via)
             if not text or age > self._config.catchup_max_age_sec:
                 if text:
                     logger.info("%s: message %d skipped, %.0fs old", channel, msg_id, age)
@@ -291,6 +293,16 @@ class Ingest:
                                  channel, msg_id)
                 return
             seen.append(msg_id)
+
+    def _measure(self, channel: str, msg_id: int, ts: datetime, lag: float, via: str) -> None:
+        if not self._config.latency_log:
+            return
+        try:
+            with open(self._config.latency_log, "a") as log:
+                log.write(f"{datetime.now(UTC).isoformat()}\t{channel}\t{msg_id}\t"
+                          f"{ts.isoformat()}\t{lag:.2f}\t{via}\n")
+        except OSError:
+            logger.warning("could not write %s", self._config.latency_log, exc_info=True)
 
     async def run(self) -> None:
         async with asyncio.TaskGroup() as tg:

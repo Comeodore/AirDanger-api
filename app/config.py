@@ -42,6 +42,7 @@ class Config:
     catchup_max_age_sec: float
     fallback_after_sec: float
     preview_poll_sec: float
+    latency_log: str | None = None
     context_ttl_min: int = 20
     _apns_key_path: str | None = field(default=None, repr=False)
 
@@ -71,6 +72,7 @@ class Config:
             catchup_max_age_sec=float(os.environ.get("TG_MAX_AGE_SEC") or 300),
             fallback_after_sec=float(os.environ.get("FALLBACK_AFTER_SEC") or 20),
             preview_poll_sec=float(os.environ.get("POLL_SEC") or 5),
+            latency_log=os.environ.get("LATENCY_LOG") or None,
             context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
         )
 

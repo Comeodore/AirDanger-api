@@ -354,6 +354,25 @@ async def test_fallback_does_not_redeliver_what_mtproto_already_sent(
         assert len(h.received) == 1
 
 
+async def test_the_latency_log_records_every_message_with_its_lag(history, tmp_path):
+    path = tmp_path / "latency.tsv"
+    async with Harness(history, make_config(latency_log=str(path))) as h:
+        posted = datetime.now(UTC) - timedelta(seconds=3)
+        await h.client.fire(FakeMessage(id=101, message="Балістика", date=posted))
+        await h.client.fire(FakeMessage(id=102, message=""))
+        rows = [line.split("\t") for line in path.read_text().splitlines()]
+    assert [r[2] for r in rows] == ["101"]
+    assert 2.5 <= float(rows[0][4]) <= 4.0
+    assert rows[0][5] == "mtproto"
+
+
+async def test_no_latency_log_is_written_when_it_is_not_configured(history, tmp_path):
+    path = tmp_path / "latency.tsv"
+    async with Harness(history, make_config()) as h:
+        await h.client.fire(FakeMessage(id=101, message="Балістика"))
+    assert not path.exists()
+
+
 async def test_a_message_the_pipeline_choked_on_is_retried(history):
     async with Harness(history, make_config()) as h:
         failures = []

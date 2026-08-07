@@ -10,12 +10,13 @@ CONTAINER="${CONTAINER:-airdanger-api}"
 ssh_do() { ssh -p "$SSH_PORT" "$HOST" "$@"; }
 
 echo "==> ensure remote dir (.env lives there, not in vcs)"
-ssh_do "mkdir -p $REMOTE_DIR"
+ssh_do "mkdir -p $REMOTE_DIR $REMOTE_DIR/logs && chown 1000:1000 $REMOTE_DIR/logs"
 
 echo "==> rsync code -> $REMOTE_DIR (secrets & vcs excluded)"
 rsync -az --delete -e "ssh -p $SSH_PORT" \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
   --exclude '.env*' --exclude '*.session' --exclude 'scripts/.login.json' \
+  --exclude 'logs' \
   ./ "$HOST:$REMOTE_DIR/"
 
 echo "==> detect current published host port (reuse it so routing is unchanged)"
@@ -31,6 +32,7 @@ echo "==> recreate container '$CONTAINER'"
 ssh_do "docker rm -f $CONTAINER 2>/dev/null || true; \
   docker run -d --name $CONTAINER --restart unless-stopped \
     --env-file $REMOTE_DIR/.env \
+    -v $REMOTE_DIR/logs:/app/logs \
     --log-opt max-size=20m --log-opt max-file=5 \
     -p $HOSTPORT:8000 $IMAGE:latest && \
   docker ps --filter name=$CONTAINER --format '{{.Names}} {{.Status}} {{.Ports}}'"
