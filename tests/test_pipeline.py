@@ -18,7 +18,9 @@ def make_config(push_warnings: bool = False) -> Config:
         push_cooldown_sec=120,
         push_warnings=push_warnings,
         push_types=frozenset({"ballistic", "irbm"}),
-        poll_sec=5.0,
+        tg_api_id=1, tg_api_hash="hash", tg_session="session",
+        catchup_sec=60.0, catchup_max_age_sec=300.0,
+        fallback_after_sec=180.0, preview_poll_sec=5.0,
         context_ttl_min=20,
     )
 
@@ -112,6 +114,18 @@ async def test_non_ballistic_messages_are_dropped():
     ctx = make_ctx()
     await ctx.handle_message("kyiv_nebo", "Шахеди, курсом на Оболонь!", T0)
     await ctx.handle_message("kyiv_nebo", "Крилаті ракети на Київ", T0)
+    assert ctx.push.sent == []
+
+async def test_a_forecast_that_something_may_happen_is_not_an_alert():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика ще може бути", T0)
+    await ctx.handle_message("kyiv_nebo", "Нагадую, ціль може не фіксуватися", T0)
+    assert ctx.push.sent == []
+
+async def test_absence_of_ballistics_is_not_an_alert():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістики поки не видно", T0)
+    await ctx.handle_message("kyiv_nebo", "Поки цілей більше не видно", T0)
     assert ctx.push.sent == []
 
 async def test_safety_messages_are_dropped():

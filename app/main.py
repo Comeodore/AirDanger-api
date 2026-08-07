@@ -13,7 +13,7 @@ from .api import router
 from .config import Config
 from .danger_service import DangerService, DetectedThreat
 from .db import Database
-from .ingest import ChannelPoller
+from .ingest import Ingest
 from .push import PushService
 from .state import ChannelContext, PushLedger
 
@@ -39,7 +39,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     stream=sys.stdout,
 )
-logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telethon").setLevel(logging.WARNING)
 
 for _handler in logging.getLogger().handlers:
     _handler.addFilter(_ShortName())
@@ -65,7 +65,7 @@ class AppContext:
     danger: DangerService
     ledger: PushLedger
     push: PushService
-    ingest: ChannelPoller | None
+    ingest: Ingest | None
     context: ChannelContext
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
@@ -149,9 +149,11 @@ async def lifespan(app: FastAPI):
     seeded = await db.pushes_since(datetime.now(UTC) - ledger.cooldown)
     ledger.seed(seeded)
     logger.info(
-        "config: channels=%s poll=%.1fs cooldown=%ds types=%s warnings=%s critical=%s "
-        "apns=%s topic=%s ttl=%dmin devices=%d ledger_seeded=%d",
-        ",".join(config.channels), config.poll_sec, config.push_cooldown_sec,
+        "config: channels=%s catchup=%.0fs max_age=%.0fs fallback_after=%.0fs cooldown=%ds "
+        "types=%s warnings=%s critical=%s apns=%s topic=%s ttl=%dmin devices=%d "
+        "ledger_seeded=%d",
+        ",".join(config.channels), config.catchup_sec, config.catchup_max_age_sec,
+        config.fallback_after_sec, config.push_cooldown_sec,
         ",".join(sorted(config.push_types)), config.push_warnings, config.critical_alerts,
         "SANDBOX" if config.apns_sandbox else "production", config.apns_topic,
         config.context_ttl_min, len(await db.tokens()), len(seeded),
@@ -165,8 +167,12 @@ async def lifespan(app: FastAPI):
         push=push, ingest=None,
         context=ChannelContext(ttl=timedelta(minutes=config.context_ttl_min)),
     )
-    ctx.ingest = ChannelPoller(config, ctx.handle_message)
-    tasks = [asyncio.create_task(ctx.ingest.run())]
+    tasks = []
+    if config.tg_configured:
+        ctx.ingest = Ingest(config, ctx.handle_message)
+        tasks.append(asyncio.create_task(ctx.ingest.run()))
+    else:
+        logger.error("Telegram not configured — ingest is disabled, run scripts/login.py")
 
     app.state.ctx = ctx
     try:
