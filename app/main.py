@@ -18,8 +18,13 @@ from .push import PushService
 from .state import ChannelContext, PushLedger
 
 class _TrimAccessLog(logging.Filter):
+    QUIET = {"/health"}
+
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.args, tuple) and len(record.args) == 5:
+            _, _, path, _, status = record.args
+            if str(path).split("?")[0] in self.QUIET and str(status) == "200":
+                return False
             record.args = record.args[1:]
             record.msg = '%s %s HTTP/%s -> %s'
         return True
