@@ -272,20 +272,25 @@ class Ingest:
             seen = self._seen.setdefault(channel, deque(maxlen=SEEN_LIMIT))
             if msg_id in seen:
                 return
-            seen.append(msg_id)
             if via != "mtproto":
                 logger.info("%s: message %d recovered via %s", channel, msg_id, via)
             text = text.strip()
-            if not text:
-                return
             if ts.tzinfo is None:
                 ts = ts.replace(tzinfo=UTC)
             age = (datetime.now(UTC) - ts).total_seconds()
-            if age > self._config.catchup_max_age_sec:
-                logger.info("%s: message %d skipped, %.0fs old", channel, msg_id, age)
+            if not text or age > self._config.catchup_max_age_sec:
+                if text:
+                    logger.info("%s: message %d skipped, %.0fs old", channel, msg_id, age)
+                seen.append(msg_id)
                 return
             self.last_message_at[channel] = time.time()
-            await self._on_message(channel, text, ts)
+            try:
+                await self._on_message(channel, text, ts)
+            except Exception:
+                logger.exception("%s: message %d failed, leaving it to be retried",
+                                 channel, msg_id)
+                return
+            seen.append(msg_id)
 
     async def run(self) -> None:
         async with asyncio.TaskGroup() as tg:

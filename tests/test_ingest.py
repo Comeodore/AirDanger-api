@@ -354,6 +354,35 @@ async def test_fallback_does_not_redeliver_what_mtproto_already_sent(
         assert len(h.received) == 1
 
 
+async def test_a_message_the_pipeline_choked_on_is_retried(history):
+    async with Harness(history, make_config()) as h:
+        failures = []
+        original = h.ingest._on_message
+
+        async def flaky(source, text, ts):
+            if not failures:
+                failures.append(text)
+                raise ConnectionError("database is down")
+            await original(source, text, ts)
+
+        h.ingest._on_message = flaky
+        await h.client.fire(FakeMessage(id=101, message="Балістика на Київ"))
+        assert h.received == []
+        await until(lambda: len(h.received) == 1)
+        assert h.received[0][1] == "Балістика на Київ"
+
+
+async def test_a_failing_pipeline_does_not_blame_the_source(history):
+    async with Harness(history, make_config(fallback_after_sec=1000.0)) as h:
+        async def always_fails(source, text, ts):
+            raise ConnectionError("database is down")
+
+        h.ingest._on_message = always_fails
+        await h.client.fire(FakeMessage(id=101, message="Балістика на Київ"))
+        await asyncio.sleep(0.1)
+        assert h.ingest.source == "mtproto"
+
+
 async def test_a_stalled_connection_is_reported_unhealthy_at_once(history):
     async with Harness(history, make_config(fallback_after_sec=1000.0)) as h:
         assert h.ingest.source == "mtproto"
