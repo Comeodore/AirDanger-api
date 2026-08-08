@@ -22,6 +22,7 @@ BALLISTIC_WORDS = [
     r"\bбалістичн\w+",
     r"\bциркон\w*\b",
     r"\bцикрон\w*\b",
+    r"\bцирокн\w*\b",
     r"\bкинджал\w*\b",
     r"\bіскандер\w*\b",
     r"\bотрк\b",
@@ -35,7 +36,7 @@ BALLISTIC_WORDS = [
 
 
 TARGET_ON_KYIV = [
-    r"\bціл\w*\b[^\n]{0,24}\bна\s+(?:київ|нас|столиц)\w*",
+    r"\bціл\w*\b[^\n]{0,24}\b(?:на|(?:в|у)\s+бік)\s+(?:київ|києв|нас|столиц)\w*",
     r"\bна\s+київ\w*[^\n]{0,24}\bціл\w*",
 ]
 
@@ -139,8 +140,13 @@ BACKEND_VETO = [
 ]
 
 
+BARE_LIVE_MARKERS = [
+    r"\bлет(ить|ять)\b",
+    r"\bще\s+(?:\w+\s+){0,2}з\s+(?:брянськ|курськ|бєлгород|білгород|воронеж|брянщин|курщин)\w*",
+]
 INBOUND_MARKERS = [
     r"\bвідпрацюванн\w+",
+    r"\bще\s+(?:\w+\s+){0,2}з\s+(?:брянськ|курськ|бєлгород|білгород|воронеж|брянщин|курщин)\w*",
     r"\bна київ\b",
     r"\bлет(ить|ять)\b",
     r"\bціл(ь|і|ей|ям|ями)\b",
@@ -206,6 +212,7 @@ class DangerService:
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
         self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
         self._ours = matcher.compile_patterns(OURS)
+        self._bare_live = matcher.compile_patterns(BARE_LIVE_MARKERS)
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
         self._warning_markers = matcher.compile_patterns(WARNING_MARKERS)
         self._profile_veto: dict[str, list] = {}
@@ -218,6 +225,8 @@ class DangerService:
         return "inbound"
 
     def bare_severity(self, text: str) -> str:
+        if self._matcher.match_first(self._bare_live, text):
+            return "inbound"
         if self._matcher.match_first(self._warning_markers, text):
             return "warning"
         return "inbound"

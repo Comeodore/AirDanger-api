@@ -57,6 +57,9 @@ class ContextBook:
             self._per_channel[channel] = context
         return context
 
+    def ballistic_leads_any(self, ts: datetime) -> bool:
+        return any(c.ballistic_leads(ts) for c in self._per_channel.values())
+
 
 @dataclass
 class PushLedger:

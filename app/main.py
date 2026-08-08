@@ -102,7 +102,7 @@ class AppContext:
                             source, threat.type, short)
                 return
         elif evaluation.bare_target:
-            if not context.ballistic_leads(ts):
+            if not self.contexts.ballistic_leads_any(ts):
                 logger.info("%s: bare target dropped, no ballistic context — %s",
                             source, short)
                 return

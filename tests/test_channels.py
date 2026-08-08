@@ -146,11 +146,67 @@ async def test_drone_traffic_elsewhere_does_not_mute_another_channel():
     assert ctx.push.sent == ["Ще цілі"]
 
 
-async def test_each_channel_keeps_its_own_context():
+async def test_war_monitor_launch_opens_nebo_bare_window():
     ctx = make_ctx()
     await ctx.handle_message(WAR, "☄ Вихід у напрямку Києва", T0)
     ctx.push.sent.clear()
-    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=3))
+    await ctx.handle_message(NEBO, "Ще ціль", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Ще ціль"]
+
+
+async def test_drone_context_alone_does_not_open_bare():
+    ctx = make_ctx()
+    await ctx.handle_message(
+        WAR,
+        "⚠️ 10х БпЛА з Чернігівщини на Броварський район Київщини у напрямку Києва.",
+        T0,
+    )
+    await ctx.handle_message(NEBO, "Ще ціль", T0 + timedelta(minutes=1))
+    assert ctx.push.sent == []
+
+
+async def test_all_clear_on_war_monitor_closes_the_bare_window():
+    ctx = make_ctx()
+    await ctx.handle_message(WAR, "☄ Вихід у напрямку Києва", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(WAR, "⚪️ Відбій загрози балістики.",
+                             T0 + timedelta(minutes=1))
+    await ctx.handle_message(NEBO, "Ще ціль", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == []
+
+
+async def test_target_toward_kyiv_pushes_without_any_context():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Ціль в бік Києва", T0)
+    assert ctx.push.sent == ["Ціль в бік Києва"]
+
+
+async def test_misspelled_zircon_launch_on_war_monitor_pushes():
+    ctx = make_ctx()
+    await ctx.handle_message(WAR, "❗️ 2х Цирокни на Київ.", T0)
+    assert ctx.push.sent == ["❗️ 2х Цирокни на Київ."]
+
+
+async def test_bryansk_continuations_stay_inbound_inside_context():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "З Брянська летять також",
+                             T0 + timedelta(seconds=125))
+    await ctx.handle_message(NEBO, "Ще з Брянська", T0 + timedelta(seconds=250))
+    await ctx.handle_message(NEBO, "Ще ціль з Брянська", T0 + timedelta(seconds=380))
+    assert ctx.push.sent == [
+        "З Брянська летять також", "Ще з Брянська", "Ще ціль з Брянська",
+    ]
+
+
+async def test_hypothetical_launches_from_a_site_stay_silent():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "Ще можуть бути пуски, поки не висовуйтеся",
+                             T0 + timedelta(seconds=125))
+    await ctx.handle_message(NEBO, "Може бути пуск", T0 + timedelta(seconds=250))
     assert ctx.push.sent == []
 
 
