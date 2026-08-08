@@ -25,7 +25,7 @@ def make_service() -> tuple[PushService, list[str]]:
         channels=["kyiv_nebo"], database_url="postgresql://unused",
         apns_key_p8_b64="", apns_key_id="", apns_team_id="",
         apns_topic="comeodore.airdanger", apns_sandbox=False, api_key=None,
-        critical_alerts=False, push_cooldown_sec=120, push_warnings=False,
+        critical_alerts=False, push_cooldown_sec=120, push_escalation=True, push_warnings=False,
         push_types=frozenset({"ballistic", "irbm"}),
         poll_sec=5.0, max_age_sec=300.0, health_window_sec=60.0,
     )

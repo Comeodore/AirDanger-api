@@ -44,6 +44,14 @@ def test_warning_does_not_silence_inbound_escalation():
 
     assert pushed(led, threat(text="Ціль на Київ"), T0 + timedelta(seconds=30)) is True
 
+def test_an_irbm_alert_breaks_a_ballistic_cooldown():
+    led = ledger()
+    assert pushed(led, threat(), T0) is True
+    assert pushed(led, threat(type_="irbm"), T0 + timedelta(seconds=30)) is True
+    assert pushed(led, threat(type_="irbm"), T0 + timedelta(seconds=40)) is False
+    assert pushed(led, threat(), T0 + timedelta(seconds=50)) is False
+
+
 def test_wait_left_reports_remaining_cooldown():
     led = ledger(cooldown_sec=60)
     assert led.wait_left(threat(), T0) == timedelta()

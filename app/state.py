@@ -4,6 +4,14 @@ from datetime import datetime, timedelta
 from .danger_service import DetectedThreat
 
 
+SEVERITY_RANK = {"warning": 0, "inbound": 1}
+TYPE_RANK = {"irbm": 2}
+
+
+def rank_of(threat: DetectedThreat) -> int:
+    return SEVERITY_RANK.get(threat.severity, 1) + TYPE_RANK.get(threat.type, 0)
+
+
 @dataclass
 class ChannelContext:
     ttl: timedelta
@@ -38,24 +46,52 @@ class ChannelContext:
 
 
 @dataclass
+class ContextBook:
+    ttl: timedelta
+    _per_channel: dict[str, ChannelContext] = field(default_factory=dict)
+
+    def of(self, channel: str) -> ChannelContext:
+        context = self._per_channel.get(channel)
+        if context is None:
+            context = ChannelContext(ttl=self.ttl)
+            self._per_channel[channel] = context
+        return context
+
+
+@dataclass
 class PushLedger:
     cooldown: timedelta
-    _last_push: dict[tuple[str, str], datetime] = field(default_factory=dict)
+    escalate: bool = True
+    _last_at: datetime | None = None
+    _last_rank: int = -1
+
+    def _cooling(self, ts: datetime) -> bool:
+        return self._last_at is not None and ts - self._last_at < self.cooldown
 
     def should_notify(self, threat: DetectedThreat, ts: datetime) -> bool:
-        last = self._last_push.get((threat.severity, threat.type))
-        return last is None or ts - last >= self.cooldown
+        if not self._cooling(ts):
+            return True
+        return self.escalate and rank_of(threat) > self._last_rank
 
     def note(self, threat: DetectedThreat, ts: datetime) -> None:
-        self._last_push[(threat.severity, threat.type)] = ts
+        rank = rank_of(threat)
+        self._last_rank = max(self._last_rank, rank) if self._cooling(ts) else rank
+        self._last_at = ts
 
     def wait_left(self, threat: DetectedThreat, ts: datetime) -> timedelta:
-        last = self._last_push.get((threat.severity, threat.type))
-        if last is None:
+        if self._last_at is None:
             return timedelta()
-        return max(timedelta(), self.cooldown - (ts - last))
+        return max(timedelta(), self.cooldown - (ts - self._last_at))
 
     def seed(self, rows: list[dict]) -> None:
         for row in rows:
-            key = (row.get("severity") or "inbound", row["type"])
-            self._last_push[key] = row["ts"]
+            ts = row["ts"]
+            if self._last_at is None or ts >= self._last_at:
+                self.note(
+                    DetectedThreat(
+                        type=row["type"],
+                        text="",
+                        severity=row.get("severity") or "inbound",
+                    ),
+                    ts,
+                )

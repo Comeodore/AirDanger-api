@@ -14,8 +14,9 @@ from .config import Config
 from .danger_service import DangerService, DetectedThreat
 from .db import Database
 from .ingest import Ingest
+from .profiles import profile_for
 from .push import PushService
-from .state import ChannelContext, PushLedger
+from .state import ContextBook, PushLedger
 
 class _TrimAccessLog(logging.Filter):
     QUIET = {"/health"}
@@ -71,21 +72,23 @@ class AppContext:
     ledger: PushLedger
     push: PushService
     ingest: Ingest | None
-    context: ChannelContext
+    contexts: ContextBook
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
         short = brief(text)
-        evaluation = self.danger.evaluate(text)
+        profile = profile_for(source)
+        context = self.contexts.of(source)
+        evaluation = self.danger.evaluate(text, profile)
         if evaluation.safety:
-            if self.context.ballistic_live(ts):
+            if context.ballistic_live(ts):
                 logger.info("%s: safety cleared ballistic context — %s", source, short)
             else:
                 logger.debug("%s: safety, no live context — %s", source, short)
-            self.context.clear()
+            context.clear()
             return
         if evaluation.other_weapon:
             logger.debug("%s: other weapon marks context — %s", source, short)
-            self.context.mark_other(ts)
+            context.mark_other(ts)
 
         threat = evaluation.detection
         bare = False
@@ -93,13 +96,13 @@ class AppContext:
             if threat.type not in self.config.push_types:
                 logger.debug("%s: %s not in PUSH_TYPES — %s", source, threat.type, short)
                 return
-            self.context.mark_ballistic(ts)
+            context.mark_ballistic(ts)
             if threat.severity == "warning" and not self.config.push_warnings:
                 logger.info("%s: %s warning silent, PUSH_WARNINGS off — %s",
                             source, threat.type, short)
                 return
         elif evaluation.bare_target:
-            if not self.context.ballistic_leads(ts):
+            if not context.ballistic_leads(ts):
                 logger.info("%s: bare target dropped, no ballistic context — %s",
                             source, short)
                 return
@@ -150,14 +153,18 @@ class AppContext:
 async def lifespan(app: FastAPI):
     config = Config.from_env()
     db = await Database.connect(config.database_url)
-    ledger = PushLedger(cooldown=timedelta(seconds=config.push_cooldown_sec))
+    ledger = PushLedger(
+        cooldown=timedelta(seconds=config.push_cooldown_sec),
+        escalate=config.push_escalation,
+    )
     seeded = await db.pushes_since(datetime.now(UTC) - ledger.cooldown)
     ledger.seed(seeded)
     logger.info(
-        "config: channels=%s poll=%.1fs max_age=%.0fs cooldown=%ds types=%s warnings=%s "
+        "config: channels=%s poll=%.1fs max_age=%.0fs cooldown=%ds escalation=%s "
+        "types=%s warnings=%s "
         "critical=%s apns=%s topic=%s ttl=%dmin devices=%d ledger_seeded=%d",
         ",".join(config.channels), config.poll_sec, config.max_age_sec,
-        config.push_cooldown_sec,
+        config.push_cooldown_sec, config.push_escalation,
         ",".join(sorted(config.push_types)), config.push_warnings, config.critical_alerts,
         "SANDBOX" if config.apns_sandbox else "production", config.apns_topic,
         config.context_ttl_min, len(await db.tokens()), len(seeded),
@@ -169,7 +176,7 @@ async def lifespan(app: FastAPI):
     ctx = AppContext(
         config=config, db=db, danger=DangerService(), ledger=ledger,
         push=push, ingest=None,
-        context=ChannelContext(ttl=timedelta(minutes=config.context_ttl_min)),
+        contexts=ContextBook(ttl=timedelta(minutes=config.context_ttl_min)),
     )
     ctx.ingest = Ingest(config, ctx.handle_message)
     tasks = [asyncio.create_task(ctx.ingest.run())]

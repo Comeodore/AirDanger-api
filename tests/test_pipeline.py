@@ -3,12 +3,12 @@ from datetime import UTC, datetime, timedelta
 from app.config import Config
 from app.danger_service import DangerService
 from app.main import AppContext
-from app.state import ChannelContext, PushLedger
+from app.state import ContextBook, PushLedger
 
 T0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
 
-def make_config(push_warnings: bool = False) -> Config:
+def make_config(push_warnings: bool = False, push_escalation: bool = True) -> Config:
     return Config(
         channels=["kyiv_nebo"],
         database_url="postgresql://unused",
@@ -16,6 +16,7 @@ def make_config(push_warnings: bool = False) -> Config:
         apns_topic="t", apns_sandbox=True, api_key=None,
         critical_alerts=False,
         push_cooldown_sec=120,
+        push_escalation=push_escalation,
         push_warnings=push_warnings,
         push_types=frozenset({"ballistic", "irbm"}),
         poll_sec=5.0, max_age_sec=300.0, health_window_sec=60.0,
@@ -44,15 +45,16 @@ class FakePush:
         return self.delivered
 
 def make_ctx(push_warnings: bool = False, delivered: int = 1,
-             devices: int = 1) -> AppContext:
+             devices: int = 1, push_escalation: bool = True) -> AppContext:
     return AppContext(
-        config=make_config(push_warnings),
+        config=make_config(push_warnings, push_escalation),
         db=FakeDB(devices),
         danger=DangerService(),
-        ledger=PushLedger(cooldown=timedelta(seconds=120)),
+        ledger=PushLedger(cooldown=timedelta(seconds=120),
+                          escalate=push_escalation),
         push=FakePush(delivered),
         ingest=None,
-        context=ChannelContext(ttl=timedelta(minutes=20)),
+        contexts=ContextBook(ttl=timedelta(minutes=20)),
     )
 
 async def test_ballistic_mention_pushes_and_is_recorded():

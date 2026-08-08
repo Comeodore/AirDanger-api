@@ -39,7 +39,7 @@ def make_config(**overrides) -> Config:
         database_url="postgresql://unused",
         apns_key_p8_b64="", apns_key_id="", apns_team_id="",
         apns_topic="t", apns_sandbox=True, api_key=None,
-        critical_alerts=False, push_cooldown_sec=120, push_warnings=False,
+        critical_alerts=False, push_cooldown_sec=120, push_escalation=True, push_warnings=False,
         push_types=frozenset({"ballistic", "irbm"}),
         poll_sec=0.02, max_age_sec=300.0, health_window_sec=0.2,
         context_ttl_min=20,

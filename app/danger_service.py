@@ -3,6 +3,19 @@ from dataclasses import dataclass
 from custom_components.aerial_danger.danger import DangerDetector
 from custom_components.aerial_danger.danger.keywords import IRBM_DANGER, SAFETY
 
+from . import geo
+from .profiles import (
+    BALLISTIC_MARKERS,
+    CLEAR_MARKERS,
+    DRONE_MARKERS,
+    MISSILE_MARKERS,
+    QUIET_MARKERS,
+    WARNING_MARKERS as STRUCTURED_WARNING_MARKERS,
+    ChannelProfile,
+    DEFAULT_PROFILE,
+    marker_of,
+)
+
 
 BALLISTIC_WORDS = [
     r"\bбалістик\w+",
@@ -13,6 +26,10 @@ BALLISTIC_WORDS = [
     r"\bіскандер\w*\b",
     r"\bотрк\b",
     r"\bшвидкісн\w+",
+    r"\bспуск(?:и)?\b",
+    r"\bс-?400\b",
+    r"\bкн-?23\b",
+    r"\bбр\b[^\n]{0,24}\b(київ|києв|київщин|вихід|виходи|спуск)\w*",
     r"\bвих(ід|оди|оду|одів)\w*\b[^\n]{0,24}\b(брянськ|курськ|бєлгород|білгород|воронеж|таганрог)\w*",
 ]
 
@@ -28,7 +45,9 @@ DRONE_WORDS = [
     r"\bбпла\b",
     r"\bбезпілотник\w*\b",
     r"\bгерань\w*\b",
+    r"\bдрон\w*\b",
     r"\bреактивн\w+",
+    r"\bреактив\b",
 ]
 
 
@@ -39,25 +58,14 @@ OTHER_WEAPONS = [
     r"\bкрилат\w+",
     r"\bх-?101\b",
     r"\bх-?59\b",
+    r"\bх-?31\w*",
+    r"\bх-?22\b",
+    r"\bонікс\w*",
+    r"\bкаб(?:ів|и|у)?\b",
     r"\bбандерол\w*",
 ]
 
 
-_PLACES = (
-    r"черкас|полтав|сум|харків|дніпр|одес|вінниц|житомир|чернігів|кременчук|"
-    r"запоріж|миколаїв|кропивниц|умань|луцьк|рівн|тернопіл|хмельниц|ужгород|івано|"
-    r"львів|бровар|білу церкву|кривий ріг|"
-    r"сумщин|чернігівщин|харківщин|полтавщин|черкащин|житомирщин|вінниччин|"
-    r"кіровоградщин|дніпропетровщин|миколаївщин|одещин|хмельниччин|рівненщин|"
-    r"львівщин|тернопільщин|луганщин|донеччин|херсонщин|"
-    r"ржищ|українк|бориспіл|обухів|васильк|фастів|ірпін|буч[аі]|боярк|вишнев|"
-    r"глевах|кагарлик|миронівк"
-)
-ELSEWHERE = [
-    rf"\bна\s+({_PLACES})\w*",
-    rf"\bдо\s+({_PLACES})\w*",
-    rf"\bв\s+бік\s+({_PLACES})\w*",
-]
 OURS = [
     r"\bкиїв\w*",
     r"\bкиєв\w*",
@@ -106,12 +114,35 @@ BACKEND_VETO = [
     r"\bне на нас\b",
     r"\bне на київ\w*",
     r"\bрежимі ппо\b",
+    r"\bвибух\w*",
+    r"\bне балістика\b",
+    r"\bне відмічен\w+",
+    r"\bне відмічал\w+",
+    r"\bфантомн\w+",
+    r"\bне летять\b",
+    r"\bзбит[оиі]\b",
+    r"\bзнял[ио]\b",
+    r"\bзнят[оі]\b",
+    r"\bзастосовано\b",
+    r"\bатакован\w+",
+    r"\bлетіл\w+",
+    r"\bслужб\w+",
+    r"\bсклало\b",
+    r"\bвірогідн\w+",
+    r"\bна місцях\b",
+    r"\bтреба бути\b",
+    r"\bцього удару\b",
+    r"\bвдалось\b",
+    r"\bпідвезли\b",
+    r"\bв готовності\b",
+    r"\bготу(є|ють)\b",
 ]
 
 
 INBOUND_MARKERS = [
+    r"\bвідпрацюванн\w+",
     r"\bна київ\b",
-    r"\bлет(ить|ять|іла|іли)\b",
+    r"\bлет(ить|ять)\b",
     r"\bціл(ь|і|ей|ям|ями)\b",
     r"\bпідліт\w*",
     r"\bпуск\w*\b",
@@ -121,7 +152,8 @@ INBOUND_MARKERS = [
     r"\bдо нас\b",
     r"\bу наш бік\b",
     r"\bнад (київ|нами)\w*",
-    r"\bспуск\w*\b",
+    r"\b(?:у|в)\s+напрямку\s+(?:київ|києв|столиц)\w*",
+    r"\bспуск(?:и)?\b",
     r"\bшвидкісн\w+",
     r"\bзаходить\b",
     r"\bнаближа\w+",
@@ -134,13 +166,17 @@ WARNING_MARKERS = [
     r"\bможуть\b",
     r"\bможе\b",
     r"\bможлив\w+",
+    r"\bімовірн\w+",
+    r"\bймовірн\w+",
     r"\bочіку\w+",
     r"\bготується\b",
     r"\bпротягом ночі\b",
     r"\bпам'ятати\b",
-    r"\b(з|із)\s+(курськ|брянськ|воронеж|таганрог|орл|шаталов|міллеров|крим|капустин)\w*",
-    r"\b(курськ|брянськ|воронеж|таганрог|шаталов|міллеров)\w*",
+    r"\b(з|із)\s+(курськ|курьск|курск|брянськ|брянск|воронеж|таганрог|орл|шаталов|міллеров|крим|капустин)\w*",
+    r"\b(курськ|курьск|курск|брянськ|брянск|воронеж|таганрог|шаталов|міллеров)\w*",
+    r"\b(бє|бі|бе)лгород\w*",
     r"\b(з|із)\s+(брянщин|курщин|бєлгородщин|білгородщин)\w*",
+    r"\b(крим|криму|таганро[гз]|ростов|міллеров)\w*",
 ]
 
 
@@ -169,10 +205,10 @@ class DangerService:
         self._target = matcher.compile_patterns(TARGET_ON_KYIV)
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
         self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
-        self._elsewhere = matcher.compile_patterns(ELSEWHERE)
         self._ours = matcher.compile_patterns(OURS)
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
         self._warning_markers = matcher.compile_patterns(WARNING_MARKERS)
+        self._profile_veto: dict[str, list] = {}
 
     def severity(self, text: str) -> str:
         if self._matcher.match_first(self._inbound_markers, text):
@@ -187,15 +223,67 @@ class DangerService:
         return "inbound"
 
     def aimed_elsewhere(self, text: str) -> bool:
-        return bool(
-            self._matcher.match_first(self._elsewhere, text)
-            and not self._matcher.match_first(self._ours, text)
-        )
+        return geo.aimed_elsewhere(text)
 
-    def evaluate(self, text: str) -> Evaluation:
+    def _vetoed(self, text: str, profile: ChannelProfile) -> bool:
+        if self._matcher.match_first(self._veto, text):
+            return True
+        if not profile.extra_veto:
+            return False
+        cached = self._profile_veto.get(profile.name)
+        if cached is None:
+            cached = self._matcher.compile_patterns(list(profile.extra_veto))
+            self._profile_veto[profile.name] = cached
+        return bool(self._matcher.match_first(cached, text))
+
+    def _ballistic_hit(self, text: str, severity: str) -> Evaluation:
+        return Evaluation(detection=DetectedThreat(
+            type="ballistic", text=text, severity=severity,
+        ))
+
+    def _structured(self, text: str, marker: str) -> Evaluation | None:
+        if marker in CLEAR_MARKERS:
+            return Evaluation(safety=True)
+        if marker in QUIET_MARKERS:
+            return Evaluation()
+        if marker in DRONE_MARKERS:
+            return Evaluation(other_weapon=True)
+
+        if marker in BALLISTIC_MARKERS:
+            if geo.kyiv_bound(text):
+                return self._ballistic_hit(text, self.severity(text))
+            if geo.mentions_any_place(text):
+                return Evaluation()
+            return Evaluation(bare_target=True)
+        if marker in STRUCTURED_WARNING_MARKERS:
+            if geo.elsewhere_target(text) or geo.other_site(text):
+                return Evaluation()
+            return self._ballistic_hit(text, "warning")
+        if marker in MISSILE_MARKERS:
+            if self._matcher.match_first(self._ballistic, text):
+                if geo.kyiv_bound(text):
+                    return self._ballistic_hit(text, self.severity(text))
+                return Evaluation()
+            if not geo.mentions_kyiv(text):
+                return Evaluation()
+            if self._matcher.match_first(self._drone_words, text):
+                return Evaluation(other_weapon=True)
+            if self._matcher.match_first(self._other_weapons, text):
+                return Evaluation(other_weapon=True)
+            return Evaluation()
+        return None
+
+    def evaluate(
+        self, text: str, profile: ChannelProfile = DEFAULT_PROFILE,
+    ) -> Evaluation:
         if self._matcher.match_first(self._safety, text):
             return Evaluation(safety=True)
-        if self._matcher.match_first(self._veto, text):
+
+        marker = marker_of(text) if profile.structured else None
+        if marker in CLEAR_MARKERS:
+            return Evaluation(safety=True)
+
+        if self._vetoed(text, profile):
             return Evaluation()
         if self._matcher.match_first(self._irbm, text):
             return Evaluation(detection=DetectedThreat(
@@ -203,21 +291,28 @@ class DangerService:
             ))
         if len(text) > MAX_LEN or self._matcher.match_first(self._ignore, text):
             return Evaluation()
-        if self.aimed_elsewhere(text):
-            return Evaluation()
-        if self._matcher.match_first(self._ballistic, text):
-            return Evaluation(detection=DetectedThreat(
-                type="ballistic", text=text, severity=self.severity(text),
-            ))
 
+        if marker is not None:
+            structured = self._structured(text, marker)
+            if structured is not None:
+                return structured
+
+        if profile.require_kyiv:
+            if not geo.kyiv_bound(text):
+                return Evaluation()
+        elif geo.aimed_elsewhere(text):
+            return Evaluation()
+
+        if self._matcher.match_first(self._ballistic, text):
+            return self._ballistic_hit(text, self.severity(text))
         if self._matcher.match_first(self._drone_words, text):
             return Evaluation(other_weapon=True)
         if self._matcher.match_first(self._other_weapons, text):
             return Evaluation(other_weapon=True)
         if self._matcher.match_first(self._target, text):
-            return Evaluation(detection=DetectedThreat(
-                type="ballistic", text=text, severity="inbound",
-            ))
-        if self._matcher.match_first(self._inbound_markers, text):
+            return self._ballistic_hit(text, "inbound")
+        if profile.allow_bare_target and self._matcher.match_first(
+            self._inbound_markers, text
+        ):
             return Evaluation(bare_target=True)
         return Evaluation()

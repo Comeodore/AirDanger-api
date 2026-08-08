@@ -4,7 +4,7 @@ import tempfile
 from dataclasses import dataclass, field
 
 
-DEFAULT_CHANNELS = ["kyiv_nebo"]
+DEFAULT_CHANNELS = ["kyiv_nebo", "war_monitor"]
 
 
 def _bool(name: str, default: bool = False) -> bool:
@@ -27,6 +27,7 @@ class Config:
     api_key: str | None
     critical_alerts: bool
     push_cooldown_sec: int
+    push_escalation: bool
     push_warnings: bool
     push_types: frozenset[str]
     poll_sec: float
@@ -49,6 +50,7 @@ class Config:
             api_key=os.environ.get("API_KEY") or None,
             critical_alerts=_bool("CRITICAL_ALERTS", default=False),
             push_cooldown_sec=int(os.environ.get("PUSH_COOLDOWN_SEC") or 120),
+            push_escalation=_bool("PUSH_ESCALATION", default=True),
             push_warnings=_bool("PUSH_WARNINGS", default=True),
             push_types=frozenset(
                 t.strip()
