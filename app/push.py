@@ -15,6 +15,11 @@ from .timefmt import iso_kyiv
 logger = logging.getLogger(__name__)
 
 
+class _DropPingAckNoise(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "PingAckReceived" not in record.getMessage()
+
+
 class HonestChannelPool(ChannelPool):
     @property
     def bound(self) -> int:
@@ -106,6 +111,7 @@ class PushService:
         self._apns: APNs | None = None
         install_honest_channel_pool()
         APNsBaseClientProtocol.INACTIVITY_TIME = IDLE_CLOSE_SEC
+        logging.getLogger("aioapns").addFilter(_DropPingAckNoise())
         if config.apns_configured:
             self._apns = APNs(
                 key=config.apns_key_path(),

@@ -1,6 +1,7 @@
 import logging
 
 from app.main import _TrimAccessLog
+from app.push import _DropPingAckNoise
 
 
 def record(path: str, status: int, method: str = "GET") -> logging.LogRecord:
@@ -27,3 +28,20 @@ def test_the_client_address_is_trimmed_off():
     entry = record("/devices", 400, "POST")
     _TrimAccessLog().filter(entry)
     assert entry.msg % entry.args == "POST /devices HTTP/1.1 -> 400"
+
+
+def aioapns_record(msg: str, arg: str) -> logging.LogRecord:
+    return logging.LogRecord(
+        name="aioapns", level=logging.WARNING, pathname="", lineno=0,
+        msg=msg, args=(arg,), exc_info=None,
+    )
+
+
+def test_keepalive_ping_acks_are_not_logged():
+    entry = aioapns_record("Unknown event: %s", "<PingAckReceived ping_data:6169>")
+    assert _DropPingAckNoise().filter(entry) is False
+
+
+def test_other_unknown_apns_events_still_log():
+    entry = aioapns_record("Unknown event: %s", "<SomethingElse>")
+    assert _DropPingAckNoise().filter(entry) is True
