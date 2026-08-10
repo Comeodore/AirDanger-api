@@ -213,7 +213,7 @@ async def test_alerts_expire_instead_of_arriving_stale():
     assert requests[1].time_to_live == WARNING_TTL_SEC
 
 
-async def test_a_warning_arrives_without_sound_or_vibration():
+async def test_a_warning_vibrates_via_the_silent_sound_without_audio():
     service, _ = make_service()
     requests = watch_requests(service)
     ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
@@ -223,7 +223,7 @@ async def test_a_warning_arrives_without_sound_or_vibration():
         ts,
     )
     aps = requests[0].message["aps"]
-    assert "sound" not in aps
+    assert aps["sound"] == "silent.caf"
     assert aps["interruption-level"] == "time-sensitive"
     assert aps["alert"]["title"] == "Загроза балістики"
 

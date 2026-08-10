@@ -57,6 +57,7 @@ MISMATCH_REASONS = {"BadDeviceToken", "DeviceTokenNotForTopic"}
 UNUSABLE_TOKEN_REASONS = MISMATCH_REASONS | {CONFIRMED_DEAD_REASON}
 
 ALERT_SOUND = "alert.caf"
+SILENT_SOUND = "silent.caf"
 
 TITLE_LIMIT = 110
 BODY_LIMIT = 178
@@ -132,6 +133,7 @@ class PushService:
         if threat.severity == "warning":
             aps = {
                 "alert": alert,
+                "sound": SILENT_SOUND,
                 "interruption-level": "time-sensitive",
             }
         else:
