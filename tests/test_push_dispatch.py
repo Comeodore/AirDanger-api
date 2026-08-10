@@ -6,7 +6,14 @@ from aioapns import PushType
 
 from app.config import Config
 from app.danger_service import DetectedThreat
-from app.push import BACKGROUND_PRIORITY, PROBE_CONCURRENCY, PushService, SendOutcome
+from app.push import (
+    BACKGROUND_PRIORITY,
+    INBOUND_TTL_SEC,
+    PROBE_CONCURRENCY,
+    PushService,
+    SendOutcome,
+    WARNING_TTL_SEC,
+)
 
 TOKEN_A = "aa" * 32
 TOKEN_B = "bb" * 32
@@ -177,6 +184,40 @@ async def test_probe_uses_its_own_pool_and_leaves_the_alert_pool_untouched():
     alert_free, probe_free = seen[0]
     assert alert_free == ALERT_CONCURRENCY
     assert probe_free == PROBE_CONCURRENCY - 1
+
+
+def watch_requests(service: PushService) -> list:
+    requests: list = []
+
+    class FakeAPNs:
+        async def send_notification(self, request):
+            requests.append(request)
+            return SimpleNamespace(is_successful=True, description=None)
+
+    service._apns = FakeAPNs()
+    return requests
+
+
+async def test_alerts_expire_instead_of_arriving_stale():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_detection(
+        [TOKEN_A], DetectedThreat(type="ballistic", text="Балістика на Київ"), ts,
+    )
+    await service.send_detection(
+        [TOKEN_A],
+        DetectedThreat(type="ballistic", text="Загроза", severity="warning"), ts,
+    )
+    assert requests[0].time_to_live == INBOUND_TTL_SEC
+    assert requests[1].time_to_live == WARNING_TTL_SEC
+
+
+async def test_the_probe_push_is_never_stored_for_later():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    await service.token_is_usable(TOKEN_A)
+    assert requests[0].time_to_live == 0
 
 
 async def test_alert_uses_the_alert_pool_and_leaves_the_probe_pool_untouched():

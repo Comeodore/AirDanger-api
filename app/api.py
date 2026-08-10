@@ -36,16 +36,22 @@ async def register_device(body: DeviceRegistration, request: Request) -> dict:
 @router.get("/health")
 async def health(request: Request) -> dict:
     ctx = _ctx(request)
+    ingest = ctx.ingest
     now = time.time()
+    connected = bool(ingest and ingest.connected)
+    degraded = not connected
+    channels = {}
+    for channel in ctx.config.channels:
+        state = ingest.channel_state(channel) if ingest else "starting"
+        if state != "ok":
+            degraded = True
+        last = ingest.last_message_at.get(channel) if ingest else None
+        channels[channel] = {
+            "state": state,
+            "last_message_sec": round(now - last) if last is not None else None,
+        }
     return {
-        "status": "ok",
-        "connected": ctx.ingest.connected if ctx.ingest else False,
-        "channels": {
-            channel: (
-                round(now - ctx.ingest.last_message_at[channel])
-                if ctx.ingest and channel in ctx.ingest.last_message_at
-                else None
-            )
-            for channel in ctx.config.channels
-        },
+        "status": "degraded" if degraded else "ok",
+        "connected": connected,
+        "channels": channels,
     }

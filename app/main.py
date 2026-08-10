@@ -16,7 +16,7 @@ from .db import Database
 from .ingest import Ingest
 from .profiles import profile_for
 from .push import PushService
-from .state import ContextBook, PushLedger
+from .state import PushLedger, SkyContext
 
 class _TrimAccessLog(logging.Filter):
     QUIET = {"/health"}
@@ -72,23 +72,22 @@ class AppContext:
     ledger: PushLedger
     push: PushService
     ingest: Ingest | None
-    contexts: ContextBook
+    sky: SkyContext
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
         short = brief(text)
         profile = profile_for(source)
-        context = self.contexts.of(source)
         evaluation = self.danger.evaluate(text, profile)
         if evaluation.safety:
-            if context.ballistic_live(ts):
+            if self.sky.ballistic_live(ts):
                 logger.info("%s: safety cleared ballistic context — %s", source, short)
             else:
                 logger.debug("%s: safety, no live context — %s", source, short)
-            context.clear()
+            self.sky.clear()
             return
         if evaluation.other_weapon:
             logger.debug("%s: other weapon marks context — %s", source, short)
-            context.mark_other(ts)
+            self.sky.mark_other(ts)
 
         threat = evaluation.detection
         bare = False
@@ -96,13 +95,13 @@ class AppContext:
             if threat.type not in self.config.push_types:
                 logger.debug("%s: %s not in PUSH_TYPES — %s", source, threat.type, short)
                 return
-            context.mark_ballistic(ts)
+            self.sky.mark_ballistic(ts)
             if threat.severity == "warning" and not self.config.push_warnings:
                 logger.info("%s: %s warning silent, PUSH_WARNINGS off — %s",
                             source, threat.type, short)
                 return
         elif evaluation.bare_target:
-            if not self.contexts.ballistic_leads_any(ts):
+            if not self.sky.ballistic_leads(ts):
                 logger.info("%s: bare target dropped, no ballistic context — %s",
                             source, short)
                 return
@@ -176,10 +175,13 @@ async def lifespan(app: FastAPI):
     ctx = AppContext(
         config=config, db=db, danger=DangerService(), ledger=ledger,
         push=push, ingest=None,
-        contexts=ContextBook(ttl=timedelta(minutes=config.context_ttl_min)),
+        sky=SkyContext(ttl=timedelta(minutes=config.context_ttl_min)),
     )
     ctx.ingest = Ingest(config, ctx.handle_message)
-    tasks = [asyncio.create_task(ctx.ingest.run())]
+    tasks = [
+        asyncio.create_task(ctx.ingest.run()),
+        asyncio.create_task(push.keep_warm()),
+    ]
 
     app.state.ctx = ctx
     try:

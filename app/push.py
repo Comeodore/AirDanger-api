@@ -6,7 +6,7 @@ from datetime import datetime
 
 from aioapns import APNs, NotificationRequest, PushType
 from aioapns.common import DynamicBoundedSemaphore
-from aioapns.connection import ChannelPool, H2Protocol
+from aioapns.connection import APNsBaseClientProtocol, ChannelPool, H2Protocol
 
 from .config import Config
 from .danger_service import DetectedThreat
@@ -62,6 +62,14 @@ SILENT_PAYLOAD = {"aps": {"content-available": 1}}
 
 PROBE_CONCURRENCY = 4
 
+INBOUND_TTL_SEC = 300
+WARNING_TTL_SEC = 600
+PROBE_TTL_SEC = 0
+
+IDLE_CLOSE_SEC = 600.0
+KEEPALIVE_SEC = 45.0
+PING_PAYLOAD = b"airdangr"
+
 
 @dataclass
 class SendOutcome:
@@ -97,6 +105,7 @@ class PushService:
         self._probe_semaphore = asyncio.Semaphore(probe_concurrency)
         self._apns: APNs | None = None
         install_honest_channel_pool()
+        APNsBaseClientProtocol.INACTIVITY_TIME = IDLE_CLOSE_SEC
         if config.apns_configured:
             self._apns = APNs(
                 key=config.apns_key_path(),
@@ -138,22 +147,52 @@ class PushService:
             "text": threat.text,
             "ts": iso_kyiv(ts),
         }
-        return await self._fan_out(tokens, payload, priority=10)
+        ttl = WARNING_TTL_SEC if threat.severity == "warning" else INBOUND_TTL_SEC
+        return await self._fan_out(tokens, payload, priority=10, ttl=ttl)
 
     async def token_is_usable(self, token: str) -> bool:
         if self._apns is None:
             return True
         outcome = await self._send_one(
             token, SILENT_PAYLOAD, BACKGROUND_PRIORITY, PushType.BACKGROUND,
-            gate=self._probe_semaphore,
+            gate=self._probe_semaphore, ttl=PROBE_TTL_SEC,
         )
         return outcome.reason not in UNUSABLE_TOKEN_REASONS
 
-    async def _fan_out(self, tokens: list[str], payload: dict, priority: int) -> int:
+    async def keep_warm(self) -> None:
+        if self._apns is None:
+            return
+        warm: bool | None = None
+        while True:
+            ok = True
+            try:
+                await self._apns.pool.acquire()
+            except Exception:
+                ok = False
+            if ok:
+                for connection in list(self._apns.pool.connections):
+                    try:
+                        connection.conn.ping(PING_PAYLOAD)
+                        connection.flush()
+                    except Exception:
+                        pass
+            if ok != warm:
+                if not ok:
+                    logger.warning(
+                        "no warm APNs connection — the next push pays a reconnect")
+                elif warm is False:
+                    logger.info("APNs connection is warm again")
+                warm = ok
+            await asyncio.sleep(KEEPALIVE_SEC)
+
+    async def _fan_out(
+        self, tokens: list[str], payload: dict, priority: int,
+        ttl: int | None = None,
+    ) -> int:
         if self._apns is None or not tokens:
             return 0
         outcomes = await asyncio.gather(
-            *(self._send_one(t, payload, priority) for t in tokens)
+            *(self._send_one(t, payload, priority, ttl=ttl) for t in tokens)
         )
         await self._retire_dead(outcomes)
         return sum(1 for outcome in outcomes if outcome.ok)
@@ -180,6 +219,7 @@ class PushService:
         self, token: str, payload: dict, priority: int,
         push_type: PushType = PushType.ALERT,
         gate: asyncio.Semaphore | None = None,
+        ttl: int | None = None,
     ) -> SendOutcome:
         try:
             async with gate or self._semaphore:
@@ -188,6 +228,7 @@ class PushService:
                     message=payload,
                     push_type=push_type,
                     priority=priority,
+                    time_to_live=ttl,
                 )
                 response = await self._apns.send_notification(request)
             if not response.is_successful:

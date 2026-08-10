@@ -175,6 +175,34 @@ async def test_all_clear_on_war_monitor_closes_the_bare_window():
     assert ctx.push.sent == []
 
 
+async def test_all_clear_on_one_channel_closes_the_other_channels_window():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
+    await ctx.handle_message(WAR, "⚪️ Відбій загрози балістики.",
+                             T0 + timedelta(minutes=1))
+    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == []
+
+
+async def test_all_clear_about_another_city_keeps_the_kyiv_window():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
+    await ctx.handle_message(WAR, "⚪️ Відбій загрози БпЛА по Харкову.",
+                             T0 + timedelta(minutes=1))
+    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Ще цілі"]
+
+
+async def test_no_launches_report_is_not_an_alert():
+    ctx = make_ctx()
+    await ctx.handle_message(WAR, "Без виходів балістики на Київ.", T0)
+    await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
+    await ctx.handle_message(NEBO, "Наразі без пусків", T0 + timedelta(minutes=1))
+    await ctx.handle_message(WAR, "Без виходів балістики на Київ.",
+                             T0 + timedelta(minutes=2))
+    assert ctx.push.sent == []
+
+
 async def test_target_toward_kyiv_pushes_without_any_context():
     ctx = make_ctx()
     await ctx.handle_message(NEBO, "Ціль в бік Києва", T0)

@@ -88,7 +88,9 @@ BACKEND_VETO = [
     r"\bне видно\b",
     r"\bбільше не\b",
     r"\bперестал\w+",
-    r"\bбез фіксацій\b",
+    r"\bбез\s+вих\w*",
+    r"\bбез\s+пуск\w*",
+    r"\bбез\s+загроз\w*",
     r"\bвлучанн\w+",
     r"\bзавал\w+",
     r"\bпоранен\w+",
@@ -252,11 +254,11 @@ class DangerService:
 
     def _structured(self, text: str, marker: str) -> Evaluation | None:
         if marker in CLEAR_MARKERS:
-            return Evaluation(safety=True)
+            return Evaluation(safety=not geo.elsewhere_target(text))
         if marker in QUIET_MARKERS:
             return Evaluation()
         if marker in DRONE_MARKERS:
-            return Evaluation(other_weapon=True)
+            return Evaluation(other_weapon=not geo.elsewhere_target(text))
 
         if marker in BALLISTIC_MARKERS:
             if geo.kyiv_bound(text):
@@ -286,11 +288,11 @@ class DangerService:
         self, text: str, profile: ChannelProfile = DEFAULT_PROFILE,
     ) -> Evaluation:
         if self._matcher.match_first(self._safety, text):
-            return Evaluation(safety=True)
+            return Evaluation(safety=not geo.elsewhere_target(text))
 
         marker = marker_of(text) if profile.structured else None
         if marker in CLEAR_MARKERS:
-            return Evaluation(safety=True)
+            return Evaluation(safety=not geo.elsewhere_target(text))
 
         if self._vetoed(text, profile):
             return Evaluation()
@@ -315,9 +317,9 @@ class DangerService:
         if self._matcher.match_first(self._ballistic, text):
             return self._ballistic_hit(text, self.severity(text))
         if self._matcher.match_first(self._drone_words, text):
-            return Evaluation(other_weapon=True)
+            return Evaluation(other_weapon=not geo.elsewhere_target(text))
         if self._matcher.match_first(self._other_weapons, text):
-            return Evaluation(other_weapon=True)
+            return Evaluation(other_weapon=not geo.elsewhere_target(text))
         if self._matcher.match_first(self._target, text):
             return self._ballistic_hit(text, "inbound")
         if profile.allow_bare_target and self._matcher.match_first(

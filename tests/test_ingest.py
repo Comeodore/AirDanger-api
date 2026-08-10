@@ -59,9 +59,10 @@ def page(rows: list[tuple[int, str]], fresh: bool = True) -> str:
 
 
 class FakeResponse:
-    def __init__(self, body: str, status: int = 200) -> None:
+    def __init__(self, body: str, status: int = 200, url: str = "") -> None:
         self.text = body
         self.status = status
+        self.url = url
 
     def raise_for_status(self) -> None:
         if self.status != 200:
@@ -72,6 +73,9 @@ class FakeHTTP:
     body = ""
     status = 200
     hits = 0
+    fail_substring: str | None = None
+    redirect_to: str | None = None
+    urls: list[str] = []
 
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -84,7 +88,11 @@ class FakeHTTP:
 
     async def get(self, url: str) -> FakeResponse:
         FakeHTTP.hits += 1
-        return FakeResponse(FakeHTTP.body, FakeHTTP.status)
+        FakeHTTP.urls.append(url)
+        if FakeHTTP.fail_substring and FakeHTTP.fail_substring in url:
+            return FakeResponse(FakeHTTP.body, 503, url)
+        return FakeResponse(FakeHTTP.body, FakeHTTP.status,
+                            FakeHTTP.redirect_to or url)
 
 
 async def until(predicate, timeout: float = 2.0) -> None:
@@ -120,6 +128,9 @@ def http(monkeypatch):
     FakeHTTP.body = page([(98, "старе 98"), (99, "старе 99"), (100, "старе 100")])
     FakeHTTP.status = 200
     FakeHTTP.hits = 0
+    FakeHTTP.fail_substring = None
+    FakeHTTP.redirect_to = None
+    FakeHTTP.urls = []
     monkeypatch.setattr("app.ingest.httpx.AsyncClient", FakeHTTP)
     return FakeHTTP
 
@@ -206,20 +217,72 @@ async def test_health_goes_red_when_the_page_stops_yielding_messages(http):
         await until(lambda: not h.ingest.connected)
 
 
-async def test_a_burst_of_failures_logs_once_and_reports_on_recovery(http, caplog):
+async def test_a_short_burst_of_failures_is_not_logged(http, caplog):
     async with Harness(make_config()) as h:
         with caplog.at_level("INFO"):
             http.status = 503
             hits = http.hits
             await until(lambda: http.hits >= hits + 5)
-            warnings = [r for r in caplog.records if "poll failed" in r.message]
-            assert len(warnings) == 1
+            http.status = 200
+            hits = http.hits
+            await until(lambda: http.hits >= hits + 3)
+            assert not any("unreachable" in r.message for r in caplog.records)
+            assert not any("reachable again" in r.message for r in caplog.records)
+
+
+async def test_a_lasting_outage_is_logged_once_and_recovery_reported(
+    http, monkeypatch, caplog,
+):
+    monkeypatch.setattr("app.ingest.OUTAGE_WARN_SEC", 0.05)
+    async with Harness(make_config()) as h:
+        with caplog.at_level("INFO"):
+            http.status = 503
+            await until(lambda: any("unreachable" in r.message
+                                    for r in caplog.records))
+            hits = http.hits
+            await until(lambda: http.hits >= hits + 5)
+            outages = [r for r in caplog.records if "unreachable" in r.message]
+            assert len(outages) == 1
+            assert outages[0].levelname == "WARNING"
+            assert outages[0].message.startswith(CHANNEL)
 
             http.status = 200
-            await until(lambda: any("polling recovered after" in r.message
+            await until(lambda: any("reachable again" in r.message
                                     for r in caplog.records))
-            recovery = next(r for r in caplog.records if "polling recovered after" in r.message)
-            assert "failed poll(s)" in recovery.message
+            recovery = next(r for r in caplog.records if "reachable again" in r.message)
+            assert "polls failed" in recovery.message
+
+
+async def test_a_long_outage_escalates_to_error(http, monkeypatch, caplog):
+    monkeypatch.setattr("app.ingest.OUTAGE_WARN_SEC", 0.02)
+    monkeypatch.setattr("app.ingest.OUTAGE_ERROR_SEC", 0.1)
+    async with Harness(make_config()) as h:
+        with caplog.at_level("INFO"):
+            http.status = 503
+            await until(lambda: any(r.levelname == "ERROR"
+                                    and "STILL unreachable" in r.message
+                                    for r in caplog.records))
+
+
+async def test_failures_are_attributed_to_the_failing_channel(monkeypatch, caplog):
+    FakeHTTP.body = page([(100, "старе 100")])
+    FakeHTTP.status = 200
+    FakeHTTP.hits = 0
+    FakeHTTP.fail_substring = None
+    monkeypatch.setattr("app.ingest.httpx.AsyncClient", FakeHTTP)
+    monkeypatch.setattr("app.ingest.OUTAGE_WARN_SEC", 0.05)
+    async with Harness(make_config(channels=[CHANNEL, "war_monitor"])) as h:
+        await until(lambda: "war_monitor" in h.ingest._seen)
+        with caplog.at_level("INFO"):
+            FakeHTTP.fail_substring = "war_monitor"
+            await until(lambda: any("unreachable" in r.message
+                                    for r in caplog.records))
+            FakeHTTP.fail_substring = None
+            await until(lambda: any("reachable again" in r.message
+                                    for r in caplog.records))
+            touched = [r.message for r in caplog.records
+                       if "unreachable" in r.message or "reachable again" in r.message]
+            assert touched and all(m.startswith("war_monitor") for m in touched)
 
 
 async def test_health_goes_red_when_the_page_stops_answering(http):
@@ -268,3 +331,56 @@ async def test_polling_keeps_to_its_interval(http):
         http.hits = 0
         await asyncio.sleep(1.2)
         assert 3 <= http.hits <= 6
+
+
+async def test_a_revoked_preview_is_reported_once_and_recovery_noted(http, caplog):
+    async with Harness(make_config()) as h:
+        with caplog.at_level("INFO"):
+            http.redirect_to = f"https://t.me/{CHANNEL}"
+            await until(lambda: any("preview is gone or revoked" in r.message
+                                    for r in caplog.records))
+            hits = http.hits
+            await until(lambda: http.hits >= hits + 3)
+            gone = [r for r in caplog.records if "gone or revoked" in r.message]
+            assert len(gone) == 1
+            assert gone[0].levelname == "ERROR"
+            await until(lambda: not h.ingest.connected)
+
+            http.redirect_to = None
+            await until(lambda: any("preview is back" in r.message
+                                    for r in caplog.records))
+            assert h.ingest.connected
+
+
+async def test_channel_state_reports_an_outage_and_recovers(http, monkeypatch):
+    monkeypatch.setattr("app.ingest.OUTAGE_WARN_SEC", 0.05)
+    async with Harness(make_config()) as h:
+        assert h.ingest.channel_state(CHANNEL) == "ok"
+        http.status = 503
+        await until(lambda: h.ingest.channel_state(CHANNEL) == "unreachable")
+        http.status = 200
+        await until(lambda: h.ingest.channel_state(CHANNEL) == "ok")
+
+
+async def test_channel_state_reports_a_blind_page(http, monkeypatch):
+    monkeypatch.setattr("app.ingest.BLIND_WARN_SEC", 0.05)
+    async with Harness(make_config()) as h:
+        http.body = "<html><body>markup changed</body></html>"
+        await until(lambda: h.ingest.channel_state(CHANNEL) == "blind")
+
+
+async def test_channel_state_reports_a_revoked_preview(http):
+    async with Harness(make_config()) as h:
+        http.redirect_to = f"https://t.me/{CHANNEL}"
+        await until(lambda: h.ingest.channel_state(CHANNEL) == "no_preview")
+
+
+async def test_failing_polls_fall_back_to_the_mirror_host(http):
+    async with Harness(make_config()) as h:
+        http.urls.clear()
+        http.status = 503
+        await until(lambda: any("telegram.me" in u for u in http.urls))
+        http.status = 200
+        hits = http.hits
+        await until(lambda: http.hits >= hits + 2)
+        assert any("//t.me/" in u for u in http.urls)

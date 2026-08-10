@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from .danger_service import DetectedThreat
@@ -13,7 +13,7 @@ def rank_of(threat: DetectedThreat) -> int:
 
 
 @dataclass
-class ChannelContext:
+class SkyContext:
     ttl: timedelta
     _ballistic_at: datetime | None = None
     _other_at: datetime | None = None
@@ -43,22 +43,6 @@ class ChannelContext:
         if not self.other_live(ts):
             return True
         return self._ballistic_at > self._other_at
-
-
-@dataclass
-class ContextBook:
-    ttl: timedelta
-    _per_channel: dict[str, ChannelContext] = field(default_factory=dict)
-
-    def of(self, channel: str) -> ChannelContext:
-        context = self._per_channel.get(channel)
-        if context is None:
-            context = ChannelContext(ttl=self.ttl)
-            self._per_channel[channel] = context
-        return context
-
-    def ballistic_leads_any(self, ts: datetime) -> bool:
-        return any(c.ballistic_leads(ts) for c in self._per_channel.values())
 
 
 @dataclass

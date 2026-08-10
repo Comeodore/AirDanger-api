@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from app.config import Config
 from app.danger_service import DangerService
 from app.main import AppContext
-from app.state import ContextBook, PushLedger
+from app.state import PushLedger, SkyContext
 
 T0 = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
@@ -54,7 +54,7 @@ def make_ctx(push_warnings: bool = False, delivered: int = 1,
                           escalate=push_escalation),
         push=FakePush(delivered),
         ingest=None,
-        contexts=ContextBook(ttl=timedelta(minutes=20)),
+        sky=SkyContext(ttl=timedelta(minutes=20)),
     )
 
 async def test_ballistic_mention_pushes_and_is_recorded():
