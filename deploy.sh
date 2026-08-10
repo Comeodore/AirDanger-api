@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST="${HOST:-root@YOUR_HOST}"
+HOST="${HOST:?set HOST, e.g. user@your-server}"
 SSH_PORT="${SSH_PORT:-22}"
 REMOTE_DIR="${REMOTE_DIR:-/root/airdanger-api}"
 IMAGE="${IMAGE:-airdanger-api}"
