@@ -132,7 +132,7 @@ class PushService:
         if threat.severity == "warning":
             aps = {
                 "alert": alert,
-                "sound": ALERT_SOUND,
+                "interruption-level": "time-sensitive",
             }
         else:
             if self._config.critical_alerts:

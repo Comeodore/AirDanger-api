@@ -213,6 +213,33 @@ async def test_alerts_expire_instead_of_arriving_stale():
     assert requests[1].time_to_live == WARNING_TTL_SEC
 
 
+async def test_a_warning_arrives_without_sound_or_vibration():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_detection(
+        [TOKEN_A],
+        DetectedThreat(type="ballistic", text="Загроза балістики", severity="warning"),
+        ts,
+    )
+    aps = requests[0].message["aps"]
+    assert "sound" not in aps
+    assert aps["interruption-level"] == "time-sensitive"
+    assert aps["alert"]["title"] == "Загроза балістики"
+
+
+async def test_an_inbound_alert_still_sounds():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_detection(
+        [TOKEN_A], DetectedThreat(type="ballistic", text="Балістика на Київ"), ts,
+    )
+    aps = requests[0].message["aps"]
+    assert aps["sound"] == "alert.caf"
+    assert aps["interruption-level"] == "time-sensitive"
+
+
 async def test_the_probe_push_is_never_stored_for_later():
     service, _ = make_service()
     requests = watch_requests(service)
