@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import FastAPI
 
 from .api import router
+from .pages import router as pages_router
 from .config import Config
 from .danger_service import DangerService, DetectedThreat
 from .db import Database
@@ -196,3 +197,4 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Air Danger API", lifespan=lifespan)
 app.include_router(router)
+app.include_router(pages_router)
