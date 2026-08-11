@@ -82,7 +82,7 @@ class AppContext:
             if self.sky.ballistic_live(ts):
                 logger.info("%s: safety cleared ballistic context — %s", source, short)
             else:
-                logger.debug("%s: safety, no live context — %s", source, short)
+                logger.info("%s: safety, no live context — %s", source, short)
             self.sky.clear()
             return
         if evaluation.other_weapon:
