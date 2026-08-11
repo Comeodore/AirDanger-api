@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -82,6 +83,17 @@ class SendOutcome:
     token: str
     ok: bool
     reason: str | None = None
+
+
+SENTENCE_END = re.compile(r"(.+?[.!?…])(?:\s|$)")
+
+
+def first_sentence(text: str) -> str:
+    flat = " ".join(text.split())
+    match = SENTENCE_END.match(flat)
+    if match:
+        flat = match.group(1)
+    return flat.rstrip(".")
 
 
 def push_alert(text: str, fallback: str) -> dict:

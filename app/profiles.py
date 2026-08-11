@@ -18,6 +18,7 @@ class ChannelProfile:
     structured: bool = False
     require_kyiv: bool = False
     allow_bare_target: bool = True
+    trim_warning_push: bool = False
     extra_veto: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -44,6 +45,7 @@ PROFILES = {
         structured=True,
         require_kyiv=True,
         allow_bare_target=False,
+        trim_warning_push=True,
         extra_veto=WAR_MONITOR_VETO,
     ),
 }

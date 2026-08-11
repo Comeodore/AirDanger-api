@@ -80,6 +80,17 @@ async def test_war_monitor_warns_for_every_ballistic_launch_site():
         assert len(ctx.push.sent) == 1, text
 
 
+async def test_war_monitor_warning_push_is_cut_to_the_first_sentence():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        WAR,
+        "🟣 Загроза балістики з Криму. Увага. Імовірний пуск ракет системи "
+        "«Іскандер», або робота ворожої ППО С-300/С-400.",
+        T0,
+    )
+    assert ctx.push.sent == ["🟣 Загроза балістики з Криму"]
+
+
 async def test_war_monitor_drones_and_aftermath_never_push():
     ctx = make_ctx()
     for text in (

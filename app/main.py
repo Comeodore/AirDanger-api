@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
@@ -15,7 +15,7 @@ from .danger_service import DangerService, DetectedThreat
 from .db import Database
 from .ingest import Ingest
 from .profiles import profile_for
-from .push import PushService
+from .push import PushService, first_sentence
 from .state import PushLedger, SkyContext
 
 class _TrimAccessLog(logging.Filter):
@@ -115,6 +115,9 @@ class AppContext:
         else:
             logger.debug("%s: no match — %s", source, short)
             return
+
+        if threat.severity == "warning" and profile.trim_warning_push:
+            threat = replace(threat, text=first_sentence(threat.text))
 
         label = f"{threat.severity}/{threat.type}{' (context)' if bare else ''}"
         if not self.ledger.should_notify(threat, ts):
