@@ -68,17 +68,16 @@ async def test_war_monitor_suburbs_count_as_kyiv():
         assert ctx.push.sent == [text], text
 
 
-async def test_war_monitor_warns_only_for_launch_sites_that_reach_kyiv():
-    ctx = make_ctx(push_warnings=True)
-    await ctx.handle_message(WAR, "🟣 Загроза балістики з Брянська. Увага.", T0)
-    assert len(ctx.push.sent) == 1
-    ctx = make_ctx(push_warnings=True)
-    await ctx.handle_message(WAR, "🟣 Загроза балістики з Криму. Увага.", T0)
-    await ctx.handle_message(WAR, "🟣 Загроза балістики з Таганрога/Ростова. Увага.",
-                             T0 + timedelta(minutes=30))
-    await ctx.handle_message(WAR, "🟣 Загроза балістики зі Сходу.",
-                             T0 + timedelta(minutes=60))
-    assert ctx.push.sent == []
+async def test_war_monitor_warns_for_every_ballistic_launch_site():
+    for text in (
+        "🟣 Загроза балістики з Брянська. Увага.",
+        "🟣 Загроза балістики з Криму. Увага.",
+        "🟣 Загроза балістики з Таганрога/Ростова. Увага.",
+        "🟣 Загроза балістики зі Сходу.",
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(WAR, text, T0)
+        assert len(ctx.push.sent) == 1, text
 
 
 async def test_war_monitor_drones_and_aftermath_never_push():

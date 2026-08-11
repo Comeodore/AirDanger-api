@@ -267,7 +267,7 @@ class DangerService:
                 return Evaluation()
             return Evaluation(bare_target=True)
         if marker in STRUCTURED_WARNING_MARKERS:
-            if geo.elsewhere_target(text) or geo.other_site(text):
+            if geo.elsewhere_target(text):
                 return Evaluation()
             return self._ballistic_hit(text, "warning")
         if marker in MISSILE_MARKERS:
