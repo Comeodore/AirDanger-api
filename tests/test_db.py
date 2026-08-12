@@ -32,15 +32,17 @@ async def test_recent_pushes_newest_first_with_limit(db):
     for i in range(3):
         await db.insert_push("kyiv_nebo", "ballistic", "inbound", f"Ціль {i}",
                              now - timedelta(minutes=i))
+    await db.insert_push("kyiv_nebo", "ballistic", "inbound", "Тиха ціль",
+                         now - timedelta(seconds=30), pushed=False)
     await db.insert_push("kyiv_nebo", "ballistic", "inbound", "Стара ціль",
                          now - timedelta(hours=25))
 
     rows = await db.recent_pushes(10)
-    assert [r["text"] for r in rows] == ["Ціль 0", "Ціль 1", "Ціль 2"]
+    assert [r["text"] for r in rows] == ["Ціль 0", "Тиха ціль", "Ціль 1", "Ціль 2"]
     assert set(rows[0]) == {"channel", "type", "severity", "text", "ts"}
 
     rows = await db.recent_pushes(2)
-    assert [r["text"] for r in rows] == ["Ціль 0", "Ціль 1"]
+    assert [r["text"] for r in rows] == ["Ціль 0", "Тиха ціль"]
 
 async def test_push_round_trip(db):
     now = datetime.now(UTC)
@@ -48,6 +50,8 @@ async def test_push_round_trip(db):
                          now - timedelta(minutes=5))
     await db.insert_push("kyiv_nebo", "irbm", "warning", "Загроза МБР",
                          now - timedelta(minutes=1))
+    await db.insert_push("kyiv_nebo", "ballistic", "inbound", "Тиха ціль",
+                         now - timedelta(seconds=30), pushed=False)
 
     rows = await db.pushes_since(now - timedelta(minutes=2))
     assert [r["type"] for r in rows] == ["irbm"]

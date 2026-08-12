@@ -36,11 +36,12 @@ class Database:
 
     async def insert_push(
         self, channel: str, type_: str, severity: str, text: str, ts: datetime,
+        pushed: bool = True,
     ) -> None:
         await self._pool.execute(
-            """INSERT INTO pushes (channel, type, severity, text, ts)
-               VALUES ($1, $2, $3, $4, $5)""",
-            channel, type_, severity, text, ts,
+            """INSERT INTO pushes (channel, type, severity, text, ts, pushed)
+               VALUES ($1, $2, $3, $4, $5, $6)""",
+            channel, type_, severity, text, ts, pushed,
         )
 
     async def recent_pushes(self, limit: int) -> list[dict]:
@@ -55,7 +56,7 @@ class Database:
     async def pushes_since(self, since: datetime) -> list[dict]:
         rows = await self._pool.fetch(
             """SELECT channel, type, severity, text, ts FROM pushes
-               WHERE ts >= $1 ORDER BY ts ASC""",
+               WHERE ts >= $1 AND pushed ORDER BY ts ASC""",
             since,
         )
         return [dict(row) for row in rows]

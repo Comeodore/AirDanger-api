@@ -29,8 +29,8 @@ class FakeDB:
         self.pushes: list[tuple] = []
         self.devices = devices
 
-    async def insert_push(self, channel, type_, severity, text, ts):
-        self.pushes.append((channel, type_, severity, text))
+    async def insert_push(self, channel, type_, severity, text, ts, pushed=True):
+        self.pushes.append((channel, type_, severity, text, pushed))
 
     async def tokens(self):
         return [f"{i + 10:02x}" * 32 for i in range(self.devices)]
@@ -62,7 +62,7 @@ async def test_ballistic_mention_pushes_and_is_recorded():
     await ctx.handle_message("kyiv_nebo", "Швидкісна ціль на Київ!", T0)
     assert ctx.push.sent == ["Швидкісна ціль на Київ!"]
     assert ctx.db.pushes == [
-        ("kyiv_nebo", "ballistic", "inbound", "Швидкісна ціль на Київ!"),
+        ("kyiv_nebo", "ballistic", "inbound", "Швидкісна ціль на Київ!", True),
     ]
 
 async def test_partial_delivery_is_recorded_and_starts_cooldown():
@@ -72,26 +72,30 @@ async def test_partial_delivery_is_recorded_and_starts_cooldown():
     await ctx.handle_message("kyiv_nebo", "Ще Циркон на Київ", T0 + timedelta(seconds=10))
     assert len(ctx.push.sent) == 1
 
-async def test_no_registered_devices_means_no_send_and_no_record():
+async def test_no_registered_devices_means_no_send_but_feed_records():
     ctx = make_ctx(devices=0)
     await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
     assert ctx.push.sent == []
-    assert ctx.db.pushes == []
+    assert ctx.db.pushes == [
+        ("kyiv_nebo", "ballistic", "inbound", "Балістика на Київ", False),
+    ]
 
-async def test_undelivered_push_is_not_recorded_and_keeps_cooldown_open():
+async def test_undelivered_push_keeps_cooldown_open_and_records_unpushed():
     ctx = make_ctx(delivered=0)
     await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
-    assert ctx.db.pushes == []
+    assert ctx.db.pushes == [
+        ("kyiv_nebo", "ballistic", "inbound", "Балістика на Київ", False),
+    ]
     await ctx.handle_message("kyiv_nebo", "Ще Циркон на Київ", T0 + timedelta(seconds=10))
     assert len(ctx.push.sent) == 2
 
-async def test_mentions_inside_cooldown_are_silent():
+async def test_mentions_inside_cooldown_are_silent_but_feed_records():
     ctx = make_ctx()
     await ctx.handle_message("kyiv_nebo", "Швидкісна ціль на Київ!", T0)
     await ctx.handle_message("kyiv_nebo", "Ще балістика", T0 + timedelta(seconds=20))
     await ctx.handle_message("kyiv_nebo", "Балістика + Циркони", T0 + timedelta(seconds=40))
     assert len(ctx.push.sent) == 1
-    assert len(ctx.db.pushes) == 1
+    assert [p[4] for p in ctx.db.pushes] == [True, False, False]
 
 async def test_mention_after_cooldown_pushes_again():
     ctx = make_ctx()
@@ -150,7 +154,7 @@ async def test_bare_target_pushes_inside_ballistic_context():
     await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
     await ctx.handle_message("kyiv_nebo", "Цілі", T0 + timedelta(seconds=12))
     assert ctx.push.sent == ["Цілі"]
-    assert ctx.db.pushes == [("kyiv_nebo", "ballistic", "inbound", "Цілі")]
+    assert ctx.db.pushes == [("kyiv_nebo", "ballistic", "inbound", "Цілі", True)]
 
 async def test_bare_target_without_context_is_silent():
     ctx = make_ctx()

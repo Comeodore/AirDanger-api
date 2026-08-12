@@ -9,7 +9,10 @@ CREATE TABLE IF NOT EXISTS pushes (
     type      TEXT NOT NULL,
     severity  TEXT NOT NULL,
     text      TEXT NOT NULL,
+    pushed    BOOLEAN NOT NULL DEFAULT true,
     ts        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE pushes ADD COLUMN IF NOT EXISTS pushed BOOLEAN NOT NULL DEFAULT true;
 
 CREATE INDEX IF NOT EXISTS idx_pushes_ts ON pushes (ts DESC);

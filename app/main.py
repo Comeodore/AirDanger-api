@@ -120,16 +120,24 @@ class AppContext:
             threat = replace(threat, text=first_sentence(threat.text))
 
         label = f"{threat.severity}/{threat.type}{' (context)' if bare else ''}"
+
+        async def record(pushed: bool) -> None:
+            await self.db.insert_push(
+                source, threat.type, threat.severity, text, ts, pushed=pushed,
+            )
+
         if not self.ledger.should_notify(threat, ts):
             left = int(self.ledger.wait_left(threat, ts).total_seconds())
             logger.info("%s: %s suppressed, cooldown %ds left — %s",
                         source, label, left, short)
+            await record(pushed=False)
             return
 
         tokens = await self.db.tokens()
         if not tokens:
             logger.warning("%s: %s dropped, no devices registered — %s",
                            source, label, short)
+            await record(pushed=False)
             return
 
         logger.info("%s: %s sending to %d device(s) — %s",
@@ -141,6 +149,7 @@ class AppContext:
         if not delivered:
             logger.error("%s: %s DELIVERED TO NONE of %d devices in %dms",
                          source, label, len(tokens), took)
+            await record(pushed=False)
             return
         if delivered < len(tokens):
             logger.warning("%s: %s delivered to %d of %d devices in %dms",
@@ -149,7 +158,7 @@ class AppContext:
             logger.info("%s: %s delivered to %d/%d devices in %dms",
                         source, label, delivered, len(tokens), took)
         self.ledger.note(threat, ts)
-        await self.db.insert_push(source, threat.type, threat.severity, text, ts)
+        await record(pushed=True)
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
