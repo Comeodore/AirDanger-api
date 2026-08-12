@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,12 @@ async def register_device(body: DeviceRegistration, request: Request) -> dict:
     await ctx.db.upsert_device(token)
     logger.info("device registered %s… (%d total)", token[:8], len(await ctx.db.tokens()))
     return {"ok": True}
+
+@router.get("/alerts", dependencies=[Depends(check_api_key)])
+async def alerts(
+    request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> dict:
+    return {"alerts": await _ctx(request).db.recent_pushes(limit)}
 
 @router.get("/health")
 async def health(request: Request) -> dict:

@@ -43,6 +43,14 @@ class Database:
             channel, type_, severity, text, ts,
         )
 
+    async def recent_pushes(self, limit: int) -> list[dict]:
+        rows = await self._pool.fetch(
+            """SELECT channel, type, severity, text, ts FROM pushes
+               ORDER BY ts DESC LIMIT $1""",
+            limit,
+        )
+        return [dict(row) for row in rows]
+
     async def pushes_since(self, since: datetime) -> list[dict]:
         rows = await self._pool.fetch(
             """SELECT channel, type, severity, text, ts FROM pushes

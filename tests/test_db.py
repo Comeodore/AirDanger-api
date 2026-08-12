@@ -27,6 +27,16 @@ async def test_delete_device(db):
     await db.delete_device("aa" * 32)
     assert await db.tokens() == []
 
+async def test_recent_pushes_newest_first_with_limit(db):
+    now = datetime.now(UTC)
+    for i in range(3):
+        await db.insert_push("kyiv_nebo", "ballistic", "inbound", f"Ціль {i}",
+                             now - timedelta(minutes=i))
+
+    rows = await db.recent_pushes(2)
+    assert [r["text"] for r in rows] == ["Ціль 0", "Ціль 1"]
+    assert set(rows[0]) == {"channel", "type", "severity", "text", "ts"}
+
 async def test_push_round_trip(db):
     now = datetime.now(UTC)
     await db.insert_push("kyiv_nebo", "ballistic", "inbound", "Ціль на Київ",
