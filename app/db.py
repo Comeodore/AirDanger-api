@@ -46,6 +46,7 @@ class Database:
     async def recent_pushes(self, limit: int) -> list[dict]:
         rows = await self._pool.fetch(
             """SELECT channel, type, severity, text, ts FROM pushes
+               WHERE ts >= now() - interval '24 hours'
                ORDER BY ts DESC LIMIT $1""",
             limit,
         )
