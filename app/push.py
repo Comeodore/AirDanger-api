@@ -60,7 +60,7 @@ UNUSABLE_TOKEN_REASONS = MISMATCH_REASONS | {CONFIRMED_DEAD_REASON}
 ALERT_SOUND = "alert.caf"
 SILENT_SOUND = "silent.caf"
 
-SOUND_CHOICES = ("alert.caf", "siren.caf", "pulse.caf")
+SOUND_CHOICES = ("alert.caf", "siren.caf", "pulse.caf", "klaxon.caf")
 
 TITLE_LIMIT = 110
 BODY_LIMIT = 178
