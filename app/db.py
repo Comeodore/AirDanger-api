@@ -20,11 +20,17 @@ class Database:
     async def close(self) -> None:
         await self._pool.close()
 
-    async def upsert_device(self, token: str) -> None:
+    async def upsert_device(
+        self, token: str, warnings: bool | None = None, sound: str | None = None,
+    ) -> None:
         await self._pool.execute(
-            """INSERT INTO devices (token, updated_at) VALUES ($1, now())
-               ON CONFLICT (token) DO UPDATE SET updated_at = now()""",
-            token,
+            """INSERT INTO devices (token, updated_at, warnings, sound)
+               VALUES ($1, now(), coalesce($2, true), coalesce($3, 'alert.caf'))
+               ON CONFLICT (token) DO UPDATE SET
+                   updated_at = now(),
+                   warnings = coalesce($2, devices.warnings),
+                   sound = coalesce($3, devices.sound)""",
+            token, warnings, sound,
         )
 
     async def update_device_prefs(

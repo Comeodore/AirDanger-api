@@ -24,7 +24,7 @@ async def test_device_upsert_and_tokens(db):
     assert [d["token"] for d in devices] == ["aa" * 32, "bb" * 32]
     assert all(d["warnings"] is True and d["sound"] == "alert.caf" for d in devices)
 
-async def test_device_prefs_update_and_survive_reregistration(db):
+async def test_device_prefs_update_and_survive_bare_reregistration(db):
     await db.upsert_device("aa" * 32)
     assert await db.update_device_prefs("aa" * 32, warnings=False) is True
     assert await db.update_device_prefs("aa" * 32, sound="siren.caf") is True
@@ -34,6 +34,17 @@ async def test_device_prefs_update_and_survive_reregistration(db):
     row = (await db.tokens())[0]
     assert row["warnings"] is False
     assert row["sound"] == "siren.caf"
+
+async def test_registration_with_prefs_asserts_them(db):
+    await db.upsert_device("aa" * 32, warnings=False, sound="klaxon.caf")
+    row = (await db.tokens())[0]
+    assert row["warnings"] is False
+    assert row["sound"] == "klaxon.caf"
+
+    await db.upsert_device("aa" * 32, warnings=True, sound="alert.caf")
+    row = (await db.tokens())[0]
+    assert row["warnings"] is True
+    assert row["sound"] == "alert.caf"
 
 async def test_delete_device(db):
     await db.upsert_device("aa" * 32)

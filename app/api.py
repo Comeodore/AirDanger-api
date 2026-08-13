@@ -22,16 +22,20 @@ async def check_api_key(request: Request, x_api_key: Annotated[str | None, Heade
 
 class DeviceRegistration(BaseModel):
     token: str = Field(min_length=32, max_length=200, pattern=r"^[0-9a-fA-F]+$")
+    warnings: bool | None = None
+    sound: str | None = None
 
 @router.post("/devices", dependencies=[Depends(check_api_key)])
 async def register_device(body: DeviceRegistration, request: Request) -> dict:
     ctx = _ctx(request)
+    if body.sound is not None and body.sound not in SOUND_CHOICES:
+        raise HTTPException(status_code=422, detail="unknown sound")
     token = body.token.lower()
     if not await ctx.push.token_is_usable(token):
         logger.warning("device registration rejected %s…, APNs does not accept this token",
                        token[:8])
         raise HTTPException(status_code=400, detail="unknown device token")
-    await ctx.db.upsert_device(token)
+    await ctx.db.upsert_device(token, body.warnings, body.sound)
     logger.info("device registered %s… (%d total)", token[:8], len(await ctx.db.tokens()))
     return {"ok": True}
 
