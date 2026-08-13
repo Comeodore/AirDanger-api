@@ -35,9 +35,11 @@ async def register_device(body: DeviceRegistration, request: Request) -> dict:
 
 @router.get("/alerts", dependencies=[Depends(check_api_key)])
 async def alerts(
-    request: Request, limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    before: Annotated[int | None, Query(ge=1)] = None,
 ) -> dict:
-    return {"alerts": await _ctx(request).db.recent_pushes(limit)}
+    return {"alerts": await _ctx(request).db.recent_pushes(limit, before)}
 
 @router.get("/health")
 async def health(request: Request) -> dict:

@@ -71,6 +71,7 @@ PROBE_CONCURRENCY = 4
 
 INBOUND_TTL_SEC = 60
 WARNING_TTL_SEC = 300
+ALL_CLEAR_TTL_SEC = 300
 PROBE_TTL_SEC = 0
 
 IDLE_CLOSE_SEC = 600.0
@@ -169,6 +170,21 @@ class PushService:
         }
         ttl = WARNING_TTL_SEC if threat.severity == "warning" else INBOUND_TTL_SEC
         return await self._fan_out(tokens, payload, priority=10, ttl=ttl)
+
+    async def send_all_clear(
+        self, tokens: list[str], text: str, ts: datetime,
+        source: str | None = None,
+    ) -> int:
+        payload = {
+            "aps": {"alert": push_alert(text, fallback="Відбій — Київ")},
+            "kind": "all_clear",
+            "type": "all_clear",
+            "severity": "clear",
+            "source": source,
+            "text": text,
+            "ts": iso_kyiv(ts),
+        }
+        return await self._fan_out(tokens, payload, priority=10, ttl=ALL_CLEAR_TTL_SEC)
 
     async def token_is_usable(self, token: str) -> bool:
         if self._apns is None:

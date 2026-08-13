@@ -142,6 +142,32 @@ BACKEND_VETO = [
 ]
 
 
+ALL_CLEAR = [
+    r"\bвідбій\b",
+    r"\bатака завершена\b",
+    r"\bціл(?:і|ей) (?:зникл[аи]?|більше немає|вже немає|немає)\b",
+    r"\b(?:без цілей|локаційно чисто)\b",
+    r"\b(?:наразі )?загроз[аи] [^\n]{0,48}\bнемає\b",
+]
+
+
+CLEAR_FUTURE = [
+    r"\bбуде\s+відбій\b",
+    r"\bвідбій\b[^\n]{0,32}\bбуде\b",
+    r"\bочіку\w+[^\n]{0,16}\bвідб(?:ій|ою)\b",
+    r"\bне\s+дали\s+відбій\b",
+    r"\bдо\s+відбою\b",
+]
+
+CLEAR_OTHER_SCOPE = [
+    r"\b(?:бпла|шахед|дрон|безпілотник|геран)\w*",
+]
+
+CLEAR_OUR_SCOPE = [
+    r"\b(?:баліст|ракет|авіац|кинджал|циркон|іскандер|мбр)\w*",
+]
+
+
 BARE_LIVE_MARKERS = [
     r"\bлет(ить|ять)\b",
     r"\bще\s+(?:\w+\s+){0,2}з\s+(?:брянськ|курськ|бєлгород|білгород|воронеж|брянщин|курщин)\w*",
@@ -200,12 +226,17 @@ class Evaluation:
     detection: DetectedThreat | None = None
     other_weapon: bool = False
     bare_target: bool = False
+    all_clear: bool = False
 
 class DangerService:
     def __init__(self) -> None:
         matcher = DangerDetector([], [])
         self._matcher = matcher
         self._safety = matcher.compile_patterns(SAFETY)
+        self._all_clear = matcher.compile_patterns(ALL_CLEAR)
+        self._clear_future = matcher.compile_patterns(CLEAR_FUTURE)
+        self._clear_other_scope = matcher.compile_patterns(CLEAR_OTHER_SCOPE)
+        self._clear_our_scope = matcher.compile_patterns(CLEAR_OUR_SCOPE)
         self._veto = matcher.compile_patterns(BACKEND_VETO)
         self._ignore = matcher.compile_patterns(IGNORE)
         self._irbm = matcher.compile_patterns(IRBM_DANGER)
@@ -218,6 +249,19 @@ class DangerService:
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
         self._warning_markers = matcher.compile_patterns(WARNING_MARKERS)
         self._profile_veto: dict[str, list] = {}
+
+    def is_all_clear(self, text: str) -> bool:
+        if not self._matcher.match_first(self._all_clear, text):
+            return False
+        return not self._clear_vetoed(text)
+
+    def _clear_vetoed(self, text: str) -> bool:
+        if self._matcher.match_first(self._clear_future, text):
+            return True
+        return bool(
+            self._matcher.match_first(self._clear_other_scope, text)
+            and not self._matcher.match_first(self._clear_our_scope, text)
+        )
 
     def severity(self, text: str) -> str:
         if self._matcher.match_first(self._inbound_markers, text):
@@ -254,7 +298,9 @@ class DangerService:
 
     def _structured(self, text: str, marker: str) -> Evaluation | None:
         if marker in CLEAR_MARKERS:
-            return Evaluation(safety=not geo.elsewhere_target(text))
+            if geo.elsewhere_target(text):
+                return Evaluation()
+            return Evaluation(safety=True, all_clear=not self._clear_vetoed(text))
         if marker in QUIET_MARKERS:
             return Evaluation()
         if marker in DRONE_MARKERS:
@@ -288,11 +334,15 @@ class DangerService:
         self, text: str, profile: ChannelProfile = DEFAULT_PROFILE,
     ) -> Evaluation:
         if self._matcher.match_first(self._safety, text):
-            return Evaluation(safety=not geo.elsewhere_target(text))
+            if geo.elsewhere_target(text):
+                return Evaluation()
+            return Evaluation(safety=True, all_clear=self.is_all_clear(text))
 
         marker = marker_of(text) if profile.structured else None
         if marker in CLEAR_MARKERS:
-            return Evaluation(safety=not geo.elsewhere_target(text))
+            if geo.elsewhere_target(text):
+                return Evaluation()
+            return Evaluation(safety=True, all_clear=not self._clear_vetoed(text))
 
         if self._vetoed(text, profile):
             return Evaluation()

@@ -84,6 +84,8 @@ class AppContext:
             else:
                 logger.info("%s: safety, no live context — %s", source, short)
             self.sky.clear()
+            if evaluation.all_clear:
+                await self._announce_all_clear(source, text, ts)
             return
         if evaluation.other_weapon:
             logger.debug("%s: other weapon marks context — %s", source, short)
@@ -160,6 +162,47 @@ class AppContext:
         self.ledger.note(threat, ts)
         await record(pushed=True)
 
+    async def _announce_all_clear(self, source: str, text: str, ts: datetime) -> None:
+        short = brief(text)
+        window = timedelta(minutes=self.config.all_clear_window_min)
+        last_threat = await self.db.last_pushed_threat()
+        if last_threat is None or ts - last_threat > window:
+            logger.info("%s: all clear outside an episode — %s", source, short)
+            return
+        last_clear = await self.db.last_pushed_clear()
+        if last_clear is not None and last_clear >= last_threat:
+            logger.info("%s: all clear already announced — %s", source, short)
+            return
+
+        async def record(pushed: bool) -> None:
+            await self.db.insert_push(
+                source, "all_clear", "clear", text, ts, pushed=pushed,
+            )
+
+        tokens = await self.db.tokens()
+        if not tokens:
+            logger.warning("%s: all clear dropped, no devices registered — %s",
+                           source, short)
+            await record(pushed=False)
+            return
+        logger.info("%s: all clear sending to %d device(s) — %s",
+                    source, len(tokens), short)
+        started = time.monotonic()
+        delivered = await self.push.send_all_clear(tokens, text, ts, source=source)
+        took = int((time.monotonic() - started) * 1000)
+        if not delivered:
+            logger.error("%s: all clear DELIVERED TO NONE of %d devices in %dms",
+                         source, len(tokens), took)
+            await record(pushed=False)
+            return
+        if delivered < len(tokens):
+            logger.warning("%s: all clear delivered to %d of %d devices in %dms",
+                           source, delivered, len(tokens), took)
+        else:
+            logger.info("%s: all clear delivered to %d/%d devices in %dms",
+                        source, delivered, len(tokens), took)
+        await record(pushed=True)
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     config = Config.from_env()
@@ -172,11 +215,12 @@ async def lifespan(app: FastAPI):
     ledger.seed(seeded)
     logger.info(
         "config: channels=%s poll=%.1fs max_age=%.0fs cooldown=%ds escalation=%s "
-        "types=%s warnings=%s "
+        "types=%s warnings=%s clear_window=%dmin "
         "critical=%s apns=%s topic=%s ttl=%dmin devices=%d ledger_seeded=%d",
         ",".join(config.channels), config.poll_sec, config.max_age_sec,
         config.push_cooldown_sec, config.push_escalation,
-        ",".join(sorted(config.push_types)), config.push_warnings, config.critical_alerts,
+        ",".join(sorted(config.push_types)), config.push_warnings,
+        config.all_clear_window_min, config.critical_alerts,
         "SANDBOX" if config.apns_sandbox else "production", config.apns_topic,
         config.context_ttl_min, len(await db.tokens()), len(seeded),
     )

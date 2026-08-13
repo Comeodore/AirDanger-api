@@ -16,3 +16,5 @@ CREATE TABLE IF NOT EXISTS pushes (
 ALTER TABLE pushes ADD COLUMN IF NOT EXISTS pushed BOOLEAN NOT NULL DEFAULT true;
 
 CREATE INDEX IF NOT EXISTS idx_pushes_ts ON pushes (ts DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pushes_ts_id ON pushes (ts DESC, id DESC);

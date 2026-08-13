@@ -21,6 +21,7 @@ def make_config(push_warnings: bool = False, push_escalation: bool = True) -> Co
         push_types=frozenset({"ballistic", "irbm"}),
         poll_sec=5.0, max_age_sec=300.0, health_window_sec=60.0,
         context_ttl_min=20,
+        all_clear_window_min=60,
     )
 
 
@@ -28,20 +29,36 @@ class FakeDB:
     def __init__(self, devices: int = 1) -> None:
         self.pushes: list[tuple] = []
         self.devices = devices
+        self._pushed_at: list[tuple] = []
 
     async def insert_push(self, channel, type_, severity, text, ts, pushed=True):
         self.pushes.append((channel, type_, severity, text, pushed))
+        if pushed:
+            self._pushed_at.append((type_, ts))
 
     async def tokens(self):
         return [f"{i + 10:02x}" * 32 for i in range(self.devices)]
 
+    async def last_pushed_threat(self):
+        stamps = [ts for type_, ts in self._pushed_at if type_ != "all_clear"]
+        return max(stamps) if stamps else None
+
+    async def last_pushed_clear(self):
+        stamps = [ts for type_, ts in self._pushed_at if type_ == "all_clear"]
+        return max(stamps) if stamps else None
+
 class FakePush:
     def __init__(self, delivered: int = 1) -> None:
         self.sent: list[str] = []
+        self.cleared: list[str] = []
         self.delivered = delivered
 
     async def send_detection(self, tokens, threat, ts, source=None):
         self.sent.append(threat.text)
+        return self.delivered
+
+    async def send_all_clear(self, tokens, text, ts, source=None):
+        self.cleared.append(text)
         return self.delivered
 
 def make_ctx(push_warnings: bool = False, delivered: int = 1,
@@ -136,6 +153,89 @@ async def test_safety_messages_are_dropped():
     ctx = make_ctx()
     await ctx.handle_message("kyiv_nebo", "Відбій. Цілі зникли.", T0)
     assert ctx.push.sent == []
+
+async def test_all_clear_closes_a_pushed_episode():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=5))
+    assert ctx.push.cleared == ["Відбій"]
+    assert ctx.db.pushes == [
+        ("kyiv_nebo", "ballistic", "inbound", "Балістика на Київ", True),
+        ("kyiv_nebo", "all_clear", "clear", "Відбій", True),
+    ]
+
+async def test_all_clear_without_episode_is_silent():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0)
+    assert ctx.push.cleared == []
+    assert ctx.db.pushes == []
+
+async def test_second_all_clear_in_episode_is_suppressed():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=5))
+    await ctx.handle_message("war_monitor", "⚪️ Відбій небезпеки", T0 + timedelta(minutes=6))
+    assert ctx.push.cleared == ["Відбій"]
+
+async def test_all_clear_long_after_the_push_is_silent():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=61))
+    assert ctx.push.cleared == []
+
+async def test_post_attack_reports_are_not_all_clear():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Уламки, є постраждалі", T0 + timedelta(minutes=5))
+    assert ctx.push.cleared == []
+
+async def test_all_clear_for_another_place_is_silent():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("war_monitor", "⚪️ Відбій небезпеки (Суми)", T0 + timedelta(minutes=5))
+    assert ctx.push.cleared == []
+
+async def test_new_episode_gets_its_own_all_clear():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=5))
+    await ctx.handle_message("kyiv_nebo", "Ще Циркон на Київ", T0 + timedelta(minutes=8))
+    await ctx.handle_message("kyiv_nebo", "Відбій, цілі зникли", T0 + timedelta(minutes=12))
+    assert ctx.push.cleared == ["Відбій", "Відбій, цілі зникли"]
+
+async def test_undelivered_all_clear_can_retry():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    ctx.push.delivered = 0
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=5))
+    ctx.push.delivered = 1
+    await ctx.handle_message("kyiv_nebo", "Відбій, цілі зникли", T0 + timedelta(minutes=6))
+    assert ctx.push.cleared == ["Відбій", "Відбій, цілі зникли"]
+    assert [p[4] for p in ctx.db.pushes] == [True, False, True]
+
+async def test_forecast_of_all_clear_is_not_announced():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Скоро буде відбій", T0 + timedelta(minutes=4))
+    await ctx.handle_message("kyiv_nebo", "Очікуємо на відбій", T0 + timedelta(minutes=5))
+    await ctx.handle_message("kyiv_nebo", "Києву не дали відбій, через Бандеролі", T0 + timedelta(minutes=6))
+    assert ctx.push.cleared == []
+
+async def test_drone_only_clear_does_not_close_ballistic_episode():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("war_monitor", "⚪️ Відбій загрози БпЛА.", T0 + timedelta(minutes=5))
+    assert ctx.push.cleared == []
+    await ctx.handle_message("war_monitor", "⚪️ Відбій загрози балістики.", T0 + timedelta(minutes=6))
+    assert ctx.push.cleared == ["⚪️ Відбій загрози балістики."]
+
+async def test_all_clear_with_no_devices_is_recorded_unpushed():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    ctx.db.devices = 0
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=5))
+    assert ctx.push.cleared == []
+    assert ctx.db.pushes[-1] == ("kyiv_nebo", "all_clear", "clear", "Відбій", False)
 
 async def test_repeat_inside_cooldown_is_silent():
     ctx = make_ctx()

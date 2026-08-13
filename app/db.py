@@ -44,19 +44,31 @@ class Database:
             channel, type_, severity, text, ts, pushed,
         )
 
-    async def recent_pushes(self, limit: int) -> list[dict]:
+    async def recent_pushes(self, limit: int, before: int | None = None) -> list[dict]:
         rows = await self._pool.fetch(
-            """SELECT channel, type, severity, text, ts FROM pushes
-               WHERE ts >= now() - interval '24 hours'
-               ORDER BY ts DESC LIMIT $1""",
-            limit,
+            """SELECT id, channel, type, severity, text, ts FROM pushes
+               WHERE $2::bigint IS NULL
+                  OR (ts, id) < (SELECT ts, id FROM pushes WHERE id = $2)
+               ORDER BY ts DESC, id DESC LIMIT $1""",
+            limit, before,
         )
         return [dict(row) for row in rows]
 
     async def pushes_since(self, since: datetime) -> list[dict]:
         rows = await self._pool.fetch(
             """SELECT channel, type, severity, text, ts FROM pushes
-               WHERE ts >= $1 AND pushed ORDER BY ts ASC""",
+               WHERE ts >= $1 AND pushed AND type <> 'all_clear'
+               ORDER BY ts ASC""",
             since,
         )
         return [dict(row) for row in rows]
+
+    async def last_pushed_threat(self) -> datetime | None:
+        return await self._pool.fetchval(
+            "SELECT max(ts) FROM pushes WHERE pushed AND type <> 'all_clear'"
+        )
+
+    async def last_pushed_clear(self) -> datetime | None:
+        return await self._pool.fetchval(
+            "SELECT max(ts) FROM pushes WHERE pushed AND type = 'all_clear'"
+        )
