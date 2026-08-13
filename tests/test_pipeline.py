@@ -37,7 +37,10 @@ class FakeDB:
             self._pushed_at.append((type_, ts))
 
     async def tokens(self):
-        return [f"{i + 10:02x}" * 32 for i in range(self.devices)]
+        return [
+            {"token": f"{i + 10:02x}" * 32, "warnings": True, "sound": "alert.caf"}
+            for i in range(self.devices)
+        ]
 
     async def last_pushed_threat(self):
         stamps = [ts for type_, ts in self._pushed_at if type_ != "all_clear"]

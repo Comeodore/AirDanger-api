@@ -60,6 +60,8 @@ UNUSABLE_TOKEN_REASONS = MISMATCH_REASONS | {CONFIRMED_DEAD_REASON}
 ALERT_SOUND = "alert.caf"
 SILENT_SOUND = "silent.caf"
 
+SOUND_CHOICES = ("alert.caf", "siren.caf", "pulse.caf")
+
 TITLE_LIMIT = 110
 BODY_LIMIT = 178
 
@@ -138,29 +140,12 @@ class PushService:
             logger.warning("APNs credentials missing — push disabled")
 
     async def send_detection(
-        self, tokens: list[str], threat: DetectedThreat, ts: datetime,
+        self, devices: list[dict], threat: DetectedThreat, ts: datetime,
         source: str | None = None,
     ) -> int:
         type_name = TYPE_NAMES_UK.get(threat.type, "Небезпека")
         alert = push_alert(threat.text, fallback=f"{type_name} — Київ")
-        if threat.severity == "warning":
-            aps = {
-                "alert": alert,
-                "sound": SILENT_SOUND,
-                "interruption-level": "time-sensitive",
-            }
-        else:
-            if self._config.critical_alerts:
-                sound: dict | str = {"critical": 1, "name": ALERT_SOUND, "volume": 1.0}
-            else:
-                sound = ALERT_SOUND
-            aps = {
-                "alert": alert,
-                "sound": sound,
-                "interruption-level": "time-sensitive",
-            }
         payload = {
-            "aps": aps,
             "kind": "detection",
             "type": threat.type,
             "severity": threat.severity,
@@ -168,11 +153,42 @@ class PushService:
             "text": threat.text,
             "ts": iso_kyiv(ts),
         }
-        ttl = WARNING_TTL_SEC if threat.severity == "warning" else INBOUND_TTL_SEC
-        return await self._fan_out(tokens, payload, priority=10, ttl=ttl)
+        if threat.severity == "warning":
+            tokens = [d["token"] for d in devices if d.get("warnings", True)]
+            aps = {
+                "alert": alert,
+                "sound": SILENT_SOUND,
+                "interruption-level": "time-sensitive",
+            }
+            return await self._fan_out(
+                tokens, {"aps": aps, **payload}, priority=10, ttl=WARNING_TTL_SEC,
+            )
+
+        groups: dict[str, list[str]] = {}
+        for device in devices:
+            groups.setdefault(device.get("sound") or ALERT_SOUND, []).append(device["token"])
+
+        async def send_group(sound_name: str, tokens: list[str]) -> int:
+            if self._config.critical_alerts:
+                sound: dict | str = {"critical": 1, "name": sound_name, "volume": 1.0}
+            else:
+                sound = sound_name
+            aps = {
+                "alert": alert,
+                "sound": sound,
+                "interruption-level": "time-sensitive",
+            }
+            return await self._fan_out(
+                tokens, {"aps": aps, **payload}, priority=10, ttl=INBOUND_TTL_SEC,
+            )
+
+        results = await asyncio.gather(
+            *(send_group(sound, tokens) for sound, tokens in groups.items())
+        )
+        return sum(results)
 
     async def send_all_clear(
-        self, tokens: list[str], text: str, ts: datetime,
+        self, devices: list[dict], text: str, ts: datetime,
         source: str | None = None,
     ) -> int:
         payload = {
@@ -184,6 +200,7 @@ class PushService:
             "text": text,
             "ts": iso_kyiv(ts),
         }
+        tokens = [d["token"] for d in devices]
         return await self._fan_out(tokens, payload, priority=10, ttl=ALL_CLEAR_TTL_SEC)
 
     async def token_is_usable(self, token: str) -> bool:

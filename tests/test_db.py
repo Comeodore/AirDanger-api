@@ -20,7 +20,20 @@ async def test_device_upsert_and_tokens(db):
     await db.upsert_device("aa" * 32)
     await db.upsert_device("aa" * 32)
     await db.upsert_device("bb" * 32)
-    assert sorted(await db.tokens()) == ["aa" * 32, "bb" * 32]
+    devices = sorted(await db.tokens(), key=lambda d: d["token"])
+    assert [d["token"] for d in devices] == ["aa" * 32, "bb" * 32]
+    assert all(d["warnings"] is True and d["sound"] == "alert.caf" for d in devices)
+
+async def test_device_prefs_update_and_survive_reregistration(db):
+    await db.upsert_device("aa" * 32)
+    assert await db.update_device_prefs("aa" * 32, warnings=False) is True
+    assert await db.update_device_prefs("aa" * 32, sound="siren.caf") is True
+    assert await db.update_device_prefs("bb" * 32, warnings=True) is False
+
+    await db.upsert_device("aa" * 32)
+    row = (await db.tokens())[0]
+    assert row["warnings"] is False
+    assert row["sound"] == "siren.caf"
 
 async def test_delete_device(db):
     await db.upsert_device("aa" * 32)

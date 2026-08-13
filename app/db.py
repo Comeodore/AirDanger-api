@@ -27,12 +27,25 @@ class Database:
             token,
         )
 
+    async def update_device_prefs(
+        self, token: str, warnings: bool | None = None, sound: str | None = None,
+    ) -> bool:
+        result = await self._pool.execute(
+            """UPDATE devices SET
+                   warnings = coalesce($2, warnings),
+                   sound = coalesce($3, sound),
+                   updated_at = now()
+               WHERE token = $1""",
+            token, warnings, sound,
+        )
+        return result == "UPDATE 1"
+
     async def delete_device(self, token: str) -> None:
         await self._pool.execute("DELETE FROM devices WHERE token = $1", token)
 
-    async def tokens(self) -> list[str]:
-        rows = await self._pool.fetch("SELECT token FROM devices")
-        return [row["token"] for row in rows]
+    async def tokens(self) -> list[dict]:
+        rows = await self._pool.fetch("SELECT token, warnings, sound FROM devices")
+        return [dict(row) for row in rows]
 
     async def insert_push(
         self, channel: str, type_: str, severity: str, text: str, ts: datetime,

@@ -22,6 +22,10 @@ TOKEN_C = "cc" * 32
 ALERT_CONCURRENCY = 50
 
 
+def device(token: str, warnings: bool = True, sound: str = "alert.caf") -> dict:
+    return {"token": token, "warnings": warnings, "sound": sound}
+
+
 def make_service() -> tuple[PushService, list[str]]:
     removed: list[str] = []
 
@@ -203,10 +207,10 @@ async def test_alerts_expire_instead_of_arriving_stale():
     requests = watch_requests(service)
     ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     await service.send_detection(
-        [TOKEN_A], DetectedThreat(type="ballistic", text="Балістика на Київ"), ts,
+        [device(TOKEN_A)], DetectedThreat(type="ballistic", text="Балістика на Київ"), ts,
     )
     await service.send_detection(
-        [TOKEN_A],
+        [device(TOKEN_A)],
         DetectedThreat(type="ballistic", text="Загроза", severity="warning"), ts,
     )
     assert requests[0].time_to_live == INBOUND_TTL_SEC
@@ -218,7 +222,7 @@ async def test_a_warning_vibrates_via_the_silent_sound_without_audio():
     requests = watch_requests(service)
     ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     await service.send_detection(
-        [TOKEN_A],
+        [device(TOKEN_A)],
         DetectedThreat(type="ballistic", text="Загроза балістики", severity="warning"),
         ts,
     )
@@ -233,7 +237,7 @@ async def test_an_inbound_alert_still_sounds():
     requests = watch_requests(service)
     ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     await service.send_detection(
-        [TOKEN_A], DetectedThreat(type="ballistic", text="Балістика на Київ"), ts,
+        [device(TOKEN_A)], DetectedThreat(type="ballistic", text="Балістика на Київ"), ts,
     )
     aps = requests[0].message["aps"]
     assert aps["sound"] == "alert.caf"
@@ -251,7 +255,7 @@ async def test_alert_uses_the_alert_pool_and_leaves_the_probe_pool_untouched():
     service, _ = make_service()
     seen = watch_pools(service)
     threat = DetectedThreat(type="ballistic", text="Балістика", severity="inbound")
-    await service.send_detection([TOKEN_A], threat, datetime.now(UTC), source="kyiv_nebo")
+    await service.send_detection([device(TOKEN_A)], threat, datetime.now(UTC), source="kyiv_nebo")
     alert_free, probe_free = seen[0]
     assert alert_free == ALERT_CONCURRENCY - 1
     assert probe_free == PROBE_CONCURRENCY
@@ -270,7 +274,7 @@ async def test_saturated_probe_pool_cannot_delay_an_alert():
 
     threat = DetectedThreat(type="ballistic", text="Балістика", severity="inbound")
     reached = await asyncio.wait_for(
-        service.send_detection([TOKEN_A, TOKEN_B], threat, datetime.now(UTC),
+        service.send_detection([device(TOKEN_A), device(TOKEN_B)], threat, datetime.now(UTC),
                                source="kyiv_nebo"),
         timeout=2,
     )
@@ -289,7 +293,7 @@ async def test_send_detection_is_a_high_priority_time_sensitive_alert():
     service._apns = object()
 
     threat = DetectedThreat(type="ballistic", text="Балістика на Київ", severity="inbound")
-    reached = await service.send_detection([TOKEN_A], threat, datetime.now(UTC),
+    reached = await service.send_detection([device(TOKEN_A)], threat, datetime.now(UTC),
                                            source="kyiv_nebo")
 
     assert reached == 1
@@ -298,3 +302,47 @@ async def test_send_detection_is_a_high_priority_time_sensitive_alert():
     assert payload["aps"]["interruption-level"] == "time-sensitive"
     assert payload["aps"]["alert"]["title"] == "Балістика на Київ"
     assert payload["source"] == "kyiv_nebo"
+
+
+async def test_warning_skips_devices_that_muted_warnings():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    delivered = await service.send_detection(
+        [device(TOKEN_A, warnings=False), device(TOKEN_B)],
+        DetectedThreat(type="ballistic", text="Загроза балістики", severity="warning"),
+        ts,
+    )
+    assert delivered == 1
+    assert [r.device_token for r in requests] == [TOKEN_B]
+
+
+async def test_inbound_reaches_devices_that_muted_warnings():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    delivered = await service.send_detection(
+        [device(TOKEN_A, warnings=False), device(TOKEN_B)],
+        DetectedThreat(type="ballistic", text="Балістика на Київ"),
+        ts,
+    )
+    assert delivered == 2
+    assert sorted(r.device_token for r in requests) == [TOKEN_A, TOKEN_B]
+
+
+async def test_inbound_sound_follows_device_pref():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    delivered = await service.send_detection(
+        [
+            device(TOKEN_A, sound="siren.caf"),
+            device(TOKEN_B, sound="alert.caf"),
+            {"token": TOKEN_C},
+        ],
+        DetectedThreat(type="ballistic", text="Балістика на Київ"),
+        ts,
+    )
+    assert delivered == 3
+    sounds = {r.device_token: r.message["aps"]["sound"] for r in requests}
+    assert sounds == {TOKEN_A: "siren.caf", TOKEN_B: "alert.caf", TOKEN_C: "alert.caf"}

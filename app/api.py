@@ -2,8 +2,10 @@ import logging
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
+
+from .push import SOUND_CHOICES
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,28 @@ async def register_device(body: DeviceRegistration, request: Request) -> dict:
         raise HTTPException(status_code=400, detail="unknown device token")
     await ctx.db.upsert_device(token)
     logger.info("device registered %s… (%d total)", token[:8], len(await ctx.db.tokens()))
+    return {"ok": True}
+
+class DevicePrefs(BaseModel):
+    warnings: bool | None = None
+    sound: str | None = None
+
+@router.patch("/devices/{token}", dependencies=[Depends(check_api_key)])
+async def update_device(
+    token: Annotated[str, Path(min_length=32, max_length=200, pattern=r"^[0-9a-fA-F]+$")],
+    body: DevicePrefs,
+    request: Request,
+) -> dict:
+    ctx = _ctx(request)
+    if body.warnings is None and body.sound is None:
+        raise HTTPException(status_code=422, detail="nothing to update")
+    if body.sound is not None and body.sound not in SOUND_CHOICES:
+        raise HTTPException(status_code=422, detail="unknown sound")
+    token = token.lower()
+    if not await ctx.db.update_device_prefs(token, body.warnings, body.sound):
+        raise HTTPException(status_code=404, detail="unknown device")
+    logger.info("device %s… prefs: warnings=%s sound=%s",
+                token[:8], body.warnings, body.sound)
     return {"ok": True}
 
 @router.get("/alerts", dependencies=[Depends(check_api_key)])
