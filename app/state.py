@@ -74,6 +74,7 @@ class Episode:
             "count": self.count,
             "startedAt": self.started_at.timestamp(),
             "escalatedAt": self.escalated_at.timestamp() if self.escalated_at else None,
+            "lastAt": self.last_signal_at.timestamp(),
         }
 
 
