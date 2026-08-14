@@ -79,6 +79,7 @@ PROBE_TTL_SEC = 0
 LA_ATTRIBUTES_TYPE = "ThreatActivityAttributes"
 LA_TOPIC_SUFFIX = ".push-type.liveactivity"
 LA_TTL_SEC = 300
+LA_END_TTL_SEC = 14400
 LA_STALE_SEC = 1800
 
 IDLE_CLOSE_SEC = 600.0
@@ -197,7 +198,11 @@ class PushService:
         source: str | None = None,
     ) -> int:
         payload = {
-            "aps": {"alert": push_alert(text, fallback="Відбій — Київ")},
+            "aps": {
+                "alert": push_alert(text, fallback="Відбій — Київ"),
+                "sound": SILENT_SOUND,
+                "interruption-level": "time-sensitive",
+            },
             "kind": "all_clear",
             "type": "all_clear",
             "severity": "clear",
@@ -211,6 +216,7 @@ class PushService:
     async def send_live_activity(
         self, tokens: list[str], event: str, content_state: dict, ts: datetime,
         attributes: dict | None = None, dismissal_at: datetime | None = None,
+        priority: int = 10,
     ) -> int:
         aps: dict = {
             "timestamp": int(ts.timestamp()),
@@ -218,13 +224,17 @@ class PushService:
             "content-state": content_state,
             "stale-date": int(ts.timestamp()) + LA_STALE_SEC,
         }
+        started_at = content_state.get("startedAt")
+        if started_at:
+            aps["relevance-score"] = started_at
         if event == "start":
             aps["attributes-type"] = LA_ATTRIBUTES_TYPE
             aps["attributes"] = attributes or {}
         if dismissal_at is not None:
             aps["dismissal-date"] = int(dismissal_at.timestamp())
         return await self._fan_out(
-            tokens, {"aps": aps}, priority=10, ttl=LA_TTL_SEC,
+            tokens, {"aps": aps}, priority=priority,
+            ttl=LA_END_TTL_SEC if event == "end" else LA_TTL_SEC,
             push_type=PushType.LIVEACTIVITY,
             apns_topic=self._config.apns_topic + LA_TOPIC_SUFFIX,
         )

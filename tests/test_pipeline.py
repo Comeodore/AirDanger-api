@@ -67,6 +67,7 @@ class FakePush:
         self.sent: list[str] = []
         self.cleared: list[str] = []
         self.activity: list[tuple] = []
+        self.activity_priorities: list[int] = []
         self.delivered = delivered
 
     async def send_detection(self, tokens, threat, ts, source=None):
@@ -78,8 +79,9 @@ class FakePush:
         return self.delivered
 
     async def send_live_activity(self, tokens, event, content_state, ts,
-                                 attributes=None, dismissal_at=None):
+                                 attributes=None, dismissal_at=None, priority=10):
         self.activity.append((event, content_state, dismissal_at))
+        self.activity_priorities.append(priority)
         return self.delivered
 
 def make_ctx(push_warnings: bool = False, delivered: int = 1,
@@ -410,6 +412,15 @@ async def test_warning_during_an_episode_updates_the_counter():
     assert event == "update"
     assert state["count"] == 2
     assert state["severity"] == "inbound"
+    assert ctx.push.activity_priorities == [10, 5]
+
+
+async def test_pushed_update_raises_the_activity_priority():
+    ctx = make_ctx(push_warnings=True, la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Курська", T0 + timedelta(seconds=40))
+    await ctx.handle_message("kyiv_nebo", "Ще Циркон на Київ", T0 + timedelta(minutes=3))
+    assert ctx.push.activity_priorities == [10, 5, 10]
 
 async def test_all_clear_ends_the_live_activity_green():
     ctx = make_ctx(la_devices=1)
@@ -419,7 +430,7 @@ async def test_all_clear_ends_the_live_activity_green():
     assert event == "end"
     assert state["state"] == "clear"
     assert state["text"] == "Відбій"
-    assert dismissal == T0 + timedelta(minutes=5, seconds=180)
+    assert dismissal == T0 + timedelta(minutes=5, seconds=600)
     assert ctx.episode is None
 
 async def test_quiet_gap_starts_a_fresh_episode():
@@ -443,6 +454,6 @@ async def test_watchdog_timeout_ends_the_episode_silently():
     await ctx.end_episode(ended_at)
     event, state, dismissal = ctx.push.activity[-1]
     assert event == "end"
-    assert state["state"] == "active"
-    assert dismissal == ended_at
+    assert state["state"] == "ended"
+    assert dismissal == ended_at + timedelta(seconds=600)
     assert ctx.episode is None

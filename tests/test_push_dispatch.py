@@ -9,6 +9,8 @@ from app.danger_service import DetectedThreat
 from app.push import (
     BACKGROUND_PRIORITY,
     INBOUND_TTL_SEC,
+    LA_END_TTL_SEC,
+    LA_TTL_SEC,
     PROBE_CONCURRENCY,
     PushService,
     SendOutcome,
@@ -380,3 +382,40 @@ async def test_live_activity_end_carries_a_dismissal_date():
     assert aps["event"] == "end"
     assert "attributes-type" not in aps
     assert aps["dismissal-date"] == int(ts.timestamp()) + 180
+
+
+async def test_live_activity_end_waits_hours_for_offline_devices():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_live_activity(
+        [TOKEN_A], "end", {"state": "clear", "startedAt": ts.timestamp()}, ts,
+        dismissal_at=ts + timedelta(seconds=600),
+    )
+    request = requests[0]
+    assert request.time_to_live == LA_END_TTL_SEC
+    assert request.message["aps"]["relevance-score"] == ts.timestamp()
+
+
+async def test_live_activity_update_priority_passes_through():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_live_activity(
+        [TOKEN_A], "update", {"count": 2}, ts, priority=5,
+    )
+    assert requests[0].priority == 5
+    assert requests[0].time_to_live == LA_TTL_SEC
+
+
+async def test_all_clear_vibrates_without_sound():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    delivered = await service.send_all_clear(
+        [device(TOKEN_A)], "Відбій тривоги", ts,
+    )
+    assert delivered == 1
+    aps = requests[0].message["aps"]
+    assert aps["sound"] == "silent.caf"
+    assert aps["interruption-level"] == "time-sensitive"

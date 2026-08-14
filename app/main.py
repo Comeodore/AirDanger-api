@@ -18,7 +18,7 @@ from .profiles import profile_for
 from .push import PushService, first_sentence
 from .state import Episode, PushLedger, SkyContext
 
-CLEAR_DISMISS_SEC = 180
+LA_DISMISS_SEC = 600
 
 class _TrimAccessLog(logging.Filter):
     QUIET = {"/health"}
@@ -182,8 +182,13 @@ class AppContext:
             )
             await self._la_send("start", self.episode.content_state(), ts)
             return
+        before = (self.episode.severity, self.episode.type)
         self.episode.note(threat, ts)
-        await self._la_send("update", self.episode.content_state(), ts)
+        urgent = pushed or (self.episode.severity, self.episode.type) != before
+        await self._la_send(
+            "update", self.episode.content_state(), ts,
+            priority=10 if urgent else 5,
+        )
 
     async def end_episode(self, ts: datetime, clear_text: str | None = None) -> None:
         episode = self.episode
@@ -192,10 +197,9 @@ class AppContext:
         self.episode = None
         if clear_text is not None:
             state = episode.content_state(state="clear", text=clear_text)
-            dismissal = ts + timedelta(seconds=CLEAR_DISMISS_SEC)
         else:
-            state = episode.content_state()
-            dismissal = ts
+            state = episode.content_state(state="ended")
+        dismissal = ts + timedelta(seconds=LA_DISMISS_SEC)
         await self._la_send("end", state, ts, dismissal_at=dismissal)
 
     async def episode_watchdog(self) -> None:
@@ -212,7 +216,7 @@ class AppContext:
 
     async def _la_send(
         self, event: str, content_state: dict, ts: datetime,
-        dismissal_at: datetime | None = None,
+        dismissal_at: datetime | None = None, priority: int = 10,
     ) -> None:
         if event == "start":
             tokens = await self.db.la_start_tokens()
@@ -229,6 +233,7 @@ class AppContext:
                 return
             delivered = await self.push.send_live_activity(
                 tokens, event, content_state, ts, dismissal_at=dismissal_at,
+                priority=priority,
             )
         logger.info("live activity %s delivered to %d/%d device(s)",
                     event, delivered, len(tokens))
