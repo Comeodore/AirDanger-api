@@ -20,10 +20,15 @@ async def check_api_key(request: Request, x_api_key: Annotated[str | None, Heade
     if expected and x_api_key != expected:
         raise HTTPException(status_code=401, detail="invalid api key")
 
+LA_TOKEN = Field(default=None, min_length=32, max_length=400, pattern=r"^[0-9a-fA-F]+$")
+
+
 class DeviceRegistration(BaseModel):
     token: str = Field(min_length=32, max_length=200, pattern=r"^[0-9a-fA-F]+$")
     warnings: bool | None = None
     sound: str | None = None
+    la_start_token: str | None = LA_TOKEN
+    la_update_token: str | None = LA_TOKEN
 
 @router.post("/devices", dependencies=[Depends(check_api_key)])
 async def register_device(body: DeviceRegistration, request: Request) -> dict:
@@ -35,13 +40,22 @@ async def register_device(body: DeviceRegistration, request: Request) -> dict:
         logger.warning("device registration rejected %s…, APNs does not accept this token",
                        token[:8])
         raise HTTPException(status_code=400, detail="unknown device token")
-    await ctx.db.upsert_device(token, body.warnings, body.sound)
+    await ctx.db.upsert_device(
+        token, body.warnings, body.sound,
+        _lower(body.la_start_token), _lower(body.la_update_token),
+    )
     logger.info("device registered %s… (%d total)", token[:8], len(await ctx.db.tokens()))
     return {"ok": True}
+
+
+def _lower(token: str | None) -> str | None:
+    return token.lower() if token else None
 
 class DevicePrefs(BaseModel):
     warnings: bool | None = None
     sound: str | None = None
+    la_start_token: str | None = LA_TOKEN
+    la_update_token: str | None = LA_TOKEN
 
 @router.patch("/devices/{token}", dependencies=[Depends(check_api_key)])
 async def update_device(
@@ -50,15 +64,22 @@ async def update_device(
     request: Request,
 ) -> dict:
     ctx = _ctx(request)
-    if body.warnings is None and body.sound is None:
+    if all(value is None for value in (
+        body.warnings, body.sound, body.la_start_token, body.la_update_token,
+    )):
         raise HTTPException(status_code=422, detail="nothing to update")
     if body.sound is not None and body.sound not in SOUND_CHOICES:
         raise HTTPException(status_code=422, detail="unknown sound")
     token = token.lower()
-    if not await ctx.db.update_device_prefs(token, body.warnings, body.sound):
+    updated = await ctx.db.update_device_prefs(
+        token, body.warnings, body.sound,
+        _lower(body.la_start_token), _lower(body.la_update_token),
+    )
+    if not updated:
         raise HTTPException(status_code=404, detail="unknown device")
-    logger.info("device %s… prefs: warnings=%s sound=%s",
-                token[:8], body.warnings, body.sound)
+    logger.info("device %s… prefs: warnings=%s sound=%s la_start=%s la_update=%s",
+                token[:8], body.warnings, body.sound,
+                bool(body.la_start_token), bool(body.la_update_token))
     return {"ok": True}
 
 @router.get("/alerts", dependencies=[Depends(check_api_key)])

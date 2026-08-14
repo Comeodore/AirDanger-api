@@ -22,14 +22,26 @@ def make_config(push_warnings: bool = False, push_escalation: bool = True) -> Co
         poll_sec=5.0, max_age_sec=300.0, health_window_sec=60.0,
         context_ttl_min=20,
         all_clear_window_min=60,
+        la_timeout_min=15,
     )
 
 
 class FakeDB:
-    def __init__(self, devices: int = 1) -> None:
+    def __init__(self, devices: int = 1, la_devices: int = 0) -> None:
         self.pushes: list[tuple] = []
         self.devices = devices
+        self.la_devices = la_devices
+        self.la_update_cleared = 0
         self._pushed_at: list[tuple] = []
+
+    async def la_start_tokens(self):
+        return [f"{i + 40:02x}" * 40 for i in range(self.la_devices)]
+
+    async def la_update_tokens(self):
+        return [f"{i + 60:02x}" * 40 for i in range(self.la_devices)]
+
+    async def clear_la_update_tokens(self):
+        self.la_update_cleared += 1
 
     async def insert_push(self, channel, type_, severity, text, ts, pushed=True):
         self.pushes.append((channel, type_, severity, text, pushed))
@@ -54,6 +66,7 @@ class FakePush:
     def __init__(self, delivered: int = 1) -> None:
         self.sent: list[str] = []
         self.cleared: list[str] = []
+        self.activity: list[tuple] = []
         self.delivered = delivered
 
     async def send_detection(self, tokens, threat, ts, source=None):
@@ -64,11 +77,17 @@ class FakePush:
         self.cleared.append(text)
         return self.delivered
 
+    async def send_live_activity(self, tokens, event, content_state, ts,
+                                 attributes=None, dismissal_at=None):
+        self.activity.append((event, content_state, dismissal_at))
+        return self.delivered
+
 def make_ctx(push_warnings: bool = False, delivered: int = 1,
-             devices: int = 1, push_escalation: bool = True) -> AppContext:
+             devices: int = 1, push_escalation: bool = True,
+             la_devices: int = 0) -> AppContext:
     return AppContext(
         config=make_config(push_warnings, push_escalation),
-        db=FakeDB(devices),
+        db=FakeDB(devices, la_devices),
         danger=DangerService(),
         ledger=PushLedger(cooldown=timedelta(seconds=120),
                           escalate=push_escalation),
@@ -346,3 +365,69 @@ async def test_one_cooldown_applies_to_weapon_and_context_alike():
     assert len(ctx.push.sent) == 1
     await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(seconds=121))
     assert len(ctx.push.sent) == 2
+
+
+async def test_pushed_detection_starts_a_live_activity():
+    ctx = make_ctx(la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    assert len(ctx.push.activity) == 1
+    event, state, _ = ctx.push.activity[0]
+    assert event == "start"
+    assert state["state"] == "active"
+    assert state["severity"] == "inbound"
+    assert state["count"] == 1
+    assert state["startedAt"] == T0.timestamp()
+    assert ctx.db.la_update_cleared == 1
+
+async def test_suppressed_signals_update_the_wave_counter():
+    ctx = make_ctx(la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Ще балістика", T0 + timedelta(seconds=30))
+    events = [(event, state["count"]) for event, state, _ in ctx.push.activity]
+    assert events == [("start", 1), ("update", 2)]
+
+async def test_escalation_reaches_the_live_activity():
+    ctx = make_ctx(push_warnings=True, la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Курська", T0)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0 + timedelta(seconds=30))
+    event, state, _ = ctx.push.activity[-1]
+    assert event == "update"
+    assert state["severity"] == "inbound"
+    assert state["escalatedAt"] == (T0 + timedelta(seconds=30)).timestamp()
+    assert state["startedAt"] == T0.timestamp()
+
+async def test_all_clear_ends_the_live_activity_green():
+    ctx = make_ctx(la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=5))
+    event, state, dismissal = ctx.push.activity[-1]
+    assert event == "end"
+    assert state["state"] == "clear"
+    assert state["text"] == "Відбій"
+    assert dismissal == T0 + timedelta(minutes=5, seconds=180)
+    assert ctx.episode is None
+
+async def test_quiet_gap_starts_a_fresh_episode():
+    ctx = make_ctx(la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Ще Циркон на Київ", T0 + timedelta(minutes=20))
+    events = [event for event, _, _ in ctx.push.activity]
+    assert events == ["start", "start"]
+    assert ctx.push.activity[-1][1]["count"] == 1
+
+async def test_no_live_activity_tokens_means_no_activity_pushes():
+    ctx = make_ctx()
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=5))
+    assert ctx.push.activity == []
+
+async def test_watchdog_timeout_ends_the_episode_silently():
+    ctx = make_ctx(la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    ended_at = T0 + timedelta(minutes=16)
+    await ctx.end_episode(ended_at)
+    event, state, dismissal = ctx.push.activity[-1]
+    assert event == "end"
+    assert state["state"] == "active"
+    assert dismissal == ended_at
+    assert ctx.episode is None

@@ -22,29 +22,51 @@ class Database:
 
     async def upsert_device(
         self, token: str, warnings: bool | None = None, sound: str | None = None,
+        la_start_token: str | None = None, la_update_token: str | None = None,
     ) -> None:
         await self._pool.execute(
-            """INSERT INTO devices (token, updated_at, warnings, sound)
-               VALUES ($1, now(), coalesce($2, true), coalesce($3, 'alert.caf'))
+            """INSERT INTO devices (token, updated_at, warnings, sound,
+                                    la_start_token, la_update_token)
+               VALUES ($1, now(), coalesce($2, true), coalesce($3, 'alert.caf'), $4, $5)
                ON CONFLICT (token) DO UPDATE SET
                    updated_at = now(),
                    warnings = coalesce($2, devices.warnings),
-                   sound = coalesce($3, devices.sound)""",
-            token, warnings, sound,
+                   sound = coalesce($3, devices.sound),
+                   la_start_token = coalesce($4, devices.la_start_token),
+                   la_update_token = coalesce($5, devices.la_update_token)""",
+            token, warnings, sound, la_start_token, la_update_token,
         )
 
     async def update_device_prefs(
         self, token: str, warnings: bool | None = None, sound: str | None = None,
+        la_start_token: str | None = None, la_update_token: str | None = None,
     ) -> bool:
         result = await self._pool.execute(
             """UPDATE devices SET
                    warnings = coalesce($2, warnings),
                    sound = coalesce($3, sound),
+                   la_start_token = coalesce($4, la_start_token),
+                   la_update_token = coalesce($5, la_update_token),
                    updated_at = now()
                WHERE token = $1""",
-            token, warnings, sound,
+            token, warnings, sound, la_start_token, la_update_token,
         )
         return result == "UPDATE 1"
+
+    async def la_start_tokens(self) -> list[str]:
+        rows = await self._pool.fetch(
+            "SELECT DISTINCT la_start_token FROM devices WHERE la_start_token IS NOT NULL"
+        )
+        return [row["la_start_token"] for row in rows]
+
+    async def la_update_tokens(self) -> list[str]:
+        rows = await self._pool.fetch(
+            "SELECT DISTINCT la_update_token FROM devices WHERE la_update_token IS NOT NULL"
+        )
+        return [row["la_update_token"] for row in rows]
+
+    async def clear_la_update_tokens(self) -> None:
+        await self._pool.execute("UPDATE devices SET la_update_token = NULL")
 
     async def delete_device(self, token: str) -> None:
         await self._pool.execute("DELETE FROM devices WHERE token = $1", token)

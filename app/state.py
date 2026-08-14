@@ -46,6 +46,38 @@ class SkyContext:
 
 
 @dataclass
+class Episode:
+    started_at: datetime
+    last_signal_at: datetime
+    type: str
+    severity: str
+    text: str
+    count: int = 1
+    escalated_at: datetime | None = None
+
+    def note(self, threat: DetectedThreat, ts: datetime) -> None:
+        self.count += 1
+        self.last_signal_at = ts
+        self.text = threat.text
+        if threat.type == "irbm":
+            self.type = "irbm"
+        if threat.severity == "inbound" and self.severity == "warning":
+            self.severity = "inbound"
+            self.escalated_at = ts
+
+    def content_state(self, state: str = "active", text: str | None = None) -> dict:
+        return {
+            "state": state,
+            "type": self.type,
+            "severity": self.severity,
+            "text": " ".join((text if text is not None else self.text).split())[:178],
+            "count": self.count,
+            "startedAt": self.started_at.timestamp(),
+            "escalatedAt": self.escalated_at.timestamp() if self.escalated_at else None,
+        }
+
+
+@dataclass
 class PushLedger:
     cooldown: timedelta
     escalate: bool = True

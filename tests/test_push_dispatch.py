@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from aioapns import PushType
@@ -285,7 +285,7 @@ async def test_send_detection_is_a_high_priority_time_sensitive_alert():
     service, _ = make_service()
     captured: list[tuple] = []
 
-    async def fake_send_one(token, payload, priority, **kwargs):
+    async def fake_send_one(token, payload, priority, push_type=None, **kwargs):
         captured.append((token, payload, priority))
         return SendOutcome(token, True)
 
@@ -346,3 +346,37 @@ async def test_inbound_sound_follows_device_pref():
     assert delivered == 3
     sounds = {r.device_token: r.message["aps"]["sound"] for r in requests}
     assert sounds == {TOKEN_A: "siren.caf", TOKEN_B: "alert.caf", TOKEN_C: "alert.caf"}
+
+
+async def test_live_activity_start_payload_targets_the_la_topic():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    state = {"state": "active", "severity": "inbound", "count": 1}
+    delivered = await service.send_live_activity(
+        [TOKEN_A], "start", state, ts, attributes={"episode": 1},
+    )
+    assert delivered == 1
+    request = requests[0]
+    assert request.push_type is PushType.LIVEACTIVITY
+    assert request.apns_topic == "comeodore.airdanger.push-type.liveactivity"
+    aps = request.message["aps"]
+    assert aps["event"] == "start"
+    assert aps["attributes-type"] == "ThreatActivityAttributes"
+    assert aps["attributes"] == {"episode": 1}
+    assert aps["content-state"] == state
+    assert aps["timestamp"] == int(ts.timestamp())
+    assert aps["stale-date"] == int(ts.timestamp()) + 1800
+
+async def test_live_activity_end_carries_a_dismissal_date():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_live_activity(
+        [TOKEN_A], "end", {"state": "clear"}, ts,
+        dismissal_at=ts + timedelta(seconds=180),
+    )
+    aps = requests[0].message["aps"]
+    assert aps["event"] == "end"
+    assert "attributes-type" not in aps
+    assert aps["dismissal-date"] == int(ts.timestamp()) + 180

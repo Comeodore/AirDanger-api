@@ -35,6 +35,7 @@ class Config:
     health_window_sec: float
     context_ttl_min: int = 20
     all_clear_window_min: int = 60
+    la_timeout_min: int = 15
     _apns_key_path: str | None = field(default=None, repr=False)
 
     @classmethod
@@ -65,6 +66,7 @@ class Config:
             ),
             context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
             all_clear_window_min=int(os.environ.get("ALL_CLEAR_WINDOW_MIN") or 60),
+            la_timeout_min=int(os.environ.get("LA_TIMEOUT_MIN") or 15),
         )
 
     @property

@@ -23,8 +23,9 @@ class FakeDB:
             rows = [r for r in rows if r["id"] < before]
         return rows[:limit]
 
-    async def update_device_prefs(self, token, warnings=None, sound=None):
-        self.prefs.append((token, warnings, sound))
+    async def update_device_prefs(self, token, warnings=None, sound=None,
+                                  la_start_token=None, la_update_token=None):
+        self.prefs.append((token, warnings, sound, la_start_token, la_update_token))
         return token in self.known
 
 
@@ -124,7 +125,7 @@ async def test_device_prefs_are_updated():
             f"/devices/{token}", json={"warnings": False, "sound": "siren.caf"},
         )
     assert response.status_code == 200
-    assert app.state.ctx.db.prefs == [(token.lower(), False, "siren.caf")]
+    assert app.state.ctx.db.prefs == [(token.lower(), False, "siren.caf", None, None)]
 
 async def test_device_prefs_reject_unknown_sound_and_empty_body():
     token = "aa" * 32
@@ -166,3 +167,21 @@ async def test_alerts_requires_api_key_when_configured():
         assert (await client.get("/alerts")).status_code == 401
         good = await client.get("/alerts", headers={"X-API-Key": "secret"})
     assert good.status_code == 200
+
+
+async def test_live_activity_tokens_are_stored_via_patch():
+    token = "aa" * 32
+    la_token = "Cd" * 40
+    app = make_app([], known_tokens=(token,))
+    async with make_client(app) as client:
+        response = await client.patch(
+            f"/devices/{token}",
+            json={"la_start_token": la_token, "la_update_token": la_token},
+        )
+        assert response.status_code == 200
+        assert (await client.patch(
+            f"/devices/{token}", json={"la_start_token": "zz"},
+        )).status_code == 422
+    assert app.state.ctx.db.prefs == [
+        (token, None, None, la_token.lower(), la_token.lower()),
+    ]

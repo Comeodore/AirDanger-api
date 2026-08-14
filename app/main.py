@@ -16,7 +16,9 @@ from .db import Database
 from .ingest import Ingest
 from .profiles import profile_for
 from .push import PushService, first_sentence
-from .state import PushLedger, SkyContext
+from .state import Episode, PushLedger, SkyContext
+
+CLEAR_DISMISS_SEC = 180
 
 class _TrimAccessLog(logging.Filter):
     QUIET = {"/health"}
@@ -73,6 +75,7 @@ class AppContext:
     push: PushService
     ingest: Ingest | None
     sky: SkyContext
+    episode: Episode | None = None
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
         short = brief(text)
@@ -133,6 +136,7 @@ class AppContext:
             logger.info("%s: %s suppressed, cooldown %ds left — %s",
                         source, label, left, short)
             await record(pushed=False)
+            await self._episode_note(threat, ts, pushed=False)
             return
 
         tokens = await self.db.tokens()
@@ -152,6 +156,7 @@ class AppContext:
             logger.error("%s: %s DELIVERED TO NONE of %d devices in %dms",
                          source, label, len(tokens), took)
             await record(pushed=False)
+            await self._episode_note(threat, ts, pushed=False)
             return
         if delivered < len(tokens):
             logger.warning("%s: %s delivered to %d of %d devices in %dms",
@@ -161,6 +166,72 @@ class AppContext:
                         source, label, delivered, len(tokens), took)
         self.ledger.note(threat, ts)
         await record(pushed=True)
+        await self._episode_note(threat, ts, pushed=True)
+
+    async def _episode_note(self, threat: DetectedThreat, ts: datetime, pushed: bool) -> None:
+        gap = timedelta(minutes=self.config.la_timeout_min)
+        if self.episode is not None and ts - self.episode.last_signal_at > gap:
+            self.episode = None
+        if self.episode is None:
+            if not pushed:
+                return
+            self.episode = Episode(
+                started_at=ts, last_signal_at=ts,
+                type=threat.type, severity=threat.severity, text=threat.text,
+                escalated_at=ts if threat.severity != "warning" else None,
+            )
+            await self._la_send("start", self.episode.content_state(), ts)
+            return
+        self.episode.note(threat, ts)
+        await self._la_send("update", self.episode.content_state(), ts)
+
+    async def end_episode(self, ts: datetime, clear_text: str | None = None) -> None:
+        episode = self.episode
+        if episode is None:
+            return
+        self.episode = None
+        if clear_text is not None:
+            state = episode.content_state(state="clear", text=clear_text)
+            dismissal = ts + timedelta(seconds=CLEAR_DISMISS_SEC)
+        else:
+            state = episode.content_state()
+            dismissal = ts
+        await self._la_send("end", state, ts, dismissal_at=dismissal)
+
+    async def episode_watchdog(self) -> None:
+        while True:
+            await asyncio.sleep(30)
+            episode = self.episode
+            if episode is None:
+                continue
+            now = datetime.now(UTC)
+            if now - episode.last_signal_at > timedelta(minutes=self.config.la_timeout_min):
+                logger.info("episode ended after %d quiet minutes",
+                            self.config.la_timeout_min)
+                await self.end_episode(now)
+
+    async def _la_send(
+        self, event: str, content_state: dict, ts: datetime,
+        dismissal_at: datetime | None = None,
+    ) -> None:
+        if event == "start":
+            tokens = await self.db.la_start_tokens()
+            if not tokens:
+                return
+            await self.db.clear_la_update_tokens()
+            delivered = await self.push.send_live_activity(
+                tokens, "start", content_state, ts,
+                attributes={"episode": int(ts.timestamp())},
+            )
+        else:
+            tokens = await self.db.la_update_tokens()
+            if not tokens:
+                return
+            delivered = await self.push.send_live_activity(
+                tokens, event, content_state, ts, dismissal_at=dismissal_at,
+            )
+        logger.info("live activity %s delivered to %d/%d device(s)",
+                    event, delivered, len(tokens))
 
     async def _announce_all_clear(self, source: str, text: str, ts: datetime) -> None:
         short = brief(text)
@@ -202,6 +273,7 @@ class AppContext:
             logger.info("%s: all clear delivered to %d/%d devices in %dms",
                         source, delivered, len(tokens), took)
         await record(pushed=True)
+        await self.end_episode(ts, clear_text=text)
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -237,6 +309,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(ctx.ingest.run()),
         asyncio.create_task(push.keep_warm()),
+        asyncio.create_task(ctx.episode_watchdog()),
     ]
 
     app.state.ctx = ctx

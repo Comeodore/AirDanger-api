@@ -76,6 +76,11 @@ WARNING_TTL_SEC = 300
 ALL_CLEAR_TTL_SEC = 300
 PROBE_TTL_SEC = 0
 
+LA_ATTRIBUTES_TYPE = "ThreatActivityAttributes"
+LA_TOPIC_SUFFIX = ".push-type.liveactivity"
+LA_TTL_SEC = 300
+LA_STALE_SEC = 1800
+
 IDLE_CLOSE_SEC = 600.0
 KEEPALIVE_SEC = 45.0
 PING_PAYLOAD = b"airdangr"
@@ -203,6 +208,27 @@ class PushService:
         tokens = [d["token"] for d in devices]
         return await self._fan_out(tokens, payload, priority=10, ttl=ALL_CLEAR_TTL_SEC)
 
+    async def send_live_activity(
+        self, tokens: list[str], event: str, content_state: dict, ts: datetime,
+        attributes: dict | None = None, dismissal_at: datetime | None = None,
+    ) -> int:
+        aps: dict = {
+            "timestamp": int(ts.timestamp()),
+            "event": event,
+            "content-state": content_state,
+            "stale-date": int(ts.timestamp()) + LA_STALE_SEC,
+        }
+        if event == "start":
+            aps["attributes-type"] = LA_ATTRIBUTES_TYPE
+            aps["attributes"] = attributes or {}
+        if dismissal_at is not None:
+            aps["dismissal-date"] = int(dismissal_at.timestamp())
+        return await self._fan_out(
+            tokens, {"aps": aps}, priority=10, ttl=LA_TTL_SEC,
+            push_type=PushType.LIVEACTIVITY,
+            apns_topic=self._config.apns_topic + LA_TOPIC_SUFFIX,
+        )
+
     async def token_is_usable(self, token: str) -> bool:
         if self._apns is None:
             return True
@@ -241,13 +267,17 @@ class PushService:
     async def _fan_out(
         self, tokens: list[str], payload: dict, priority: int,
         ttl: int | None = None,
+        push_type: PushType = PushType.ALERT,
+        apns_topic: str | None = None,
     ) -> int:
         if self._apns is None or not tokens:
             return 0
         outcomes = await asyncio.gather(
-            *(self._send_one(t, payload, priority, ttl=ttl) for t in tokens)
+            *(self._send_one(t, payload, priority, push_type,
+                             ttl=ttl, apns_topic=apns_topic) for t in tokens)
         )
-        await self._retire_dead(outcomes)
+        if push_type is not PushType.LIVEACTIVITY:
+            await self._retire_dead(outcomes)
         return sum(1 for outcome in outcomes if outcome.ok)
 
     async def _retire_dead(self, outcomes: list[SendOutcome]) -> None:
@@ -273,6 +303,7 @@ class PushService:
         push_type: PushType = PushType.ALERT,
         gate: asyncio.Semaphore | None = None,
         ttl: int | None = None,
+        apns_topic: str | None = None,
     ) -> SendOutcome:
         try:
             async with gate or self._semaphore:
@@ -282,6 +313,7 @@ class PushService:
                     push_type=push_type,
                     priority=priority,
                     time_to_live=ttl,
+                    apns_topic=apns_topic,
                 )
                 response = await self._apns.send_notification(request)
             if not response.is_successful:
