@@ -173,7 +173,7 @@ class AppContext:
         if self.episode is not None and ts - self.episode.last_signal_at > gap:
             self.episode = None
         if self.episode is None:
-            if not pushed:
+            if not pushed or threat.severity == "warning":
                 return
             self.episode = Episode(
                 started_at=ts, last_signal_at=ts,

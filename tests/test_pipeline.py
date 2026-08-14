@@ -386,15 +386,30 @@ async def test_suppressed_signals_update_the_wave_counter():
     events = [(event, state["count"]) for event, state, _ in ctx.push.activity]
     assert events == [("start", 1), ("update", 2)]
 
-async def test_escalation_reaches_the_live_activity():
+async def test_warning_alone_never_starts_a_live_activity():
+    ctx = make_ctx(push_warnings=True, la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Курська", T0)
+    assert ctx.push.sent == ["Загроза балістики з Курська"]
+    assert ctx.push.activity == []
+
+async def test_episode_starts_only_at_the_confirmed_launch():
     ctx = make_ctx(push_warnings=True, la_devices=1)
     await ctx.handle_message("kyiv_nebo", "Загроза балістики з Курська", T0)
     await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0 + timedelta(seconds=30))
+    events = [event for event, _, _ in ctx.push.activity]
+    assert events == ["start"]
+    state = ctx.push.activity[0][1]
+    assert state["severity"] == "inbound"
+    assert state["startedAt"] == (T0 + timedelta(seconds=30)).timestamp()
+
+async def test_warning_during_an_episode_updates_the_counter():
+    ctx = make_ctx(push_warnings=True, la_devices=1)
+    await ctx.handle_message("kyiv_nebo", "Балістика на Київ", T0)
+    await ctx.handle_message("kyiv_nebo", "Загроза балістики з Курська", T0 + timedelta(seconds=40))
     event, state, _ = ctx.push.activity[-1]
     assert event == "update"
+    assert state["count"] == 2
     assert state["severity"] == "inbound"
-    assert state["escalatedAt"] == (T0 + timedelta(seconds=30)).timestamp()
-    assert state["startedAt"] == T0.timestamp()
 
 async def test_all_clear_ends_the_live_activity_green():
     ctx = make_ctx(la_devices=1)
