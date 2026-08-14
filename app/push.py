@@ -60,7 +60,7 @@ UNUSABLE_TOKEN_REASONS = MISMATCH_REASONS | {CONFIRMED_DEAD_REASON}
 ALERT_SOUND = "alert.caf"
 SILENT_SOUND = "silent.caf"
 
-SOUND_CHOICES = ("alert.caf", "siren.caf", "pulse.caf", "klaxon.caf")
+SOUND_CHOICES = ("alert.caf", "pulse.caf", "opovishchennia.caf")
 
 TITLE_LIMIT = 110
 BODY_LIMIT = 178
@@ -172,7 +172,10 @@ class PushService:
 
         groups: dict[str, list[str]] = {}
         for device in devices:
-            groups.setdefault(device.get("sound") or ALERT_SOUND, []).append(device["token"])
+            sound_name = device.get("sound") or ALERT_SOUND
+            if sound_name not in SOUND_CHOICES:
+                sound_name = ALERT_SOUND
+            groups.setdefault(sound_name, []).append(device["token"])
 
         async def send_group(sound_name: str, tokens: list[str]) -> int:
             if self._config.critical_alerts:

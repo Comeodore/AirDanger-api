@@ -338,7 +338,7 @@ async def test_inbound_sound_follows_device_pref():
     ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     delivered = await service.send_detection(
         [
-            device(TOKEN_A, sound="siren.caf"),
+            device(TOKEN_A, sound="opovishchennia.caf"),
             device(TOKEN_B, sound="alert.caf"),
             {"token": TOKEN_C},
         ],
@@ -347,7 +347,7 @@ async def test_inbound_sound_follows_device_pref():
     )
     assert delivered == 3
     sounds = {r.device_token: r.message["aps"]["sound"] for r in requests}
-    assert sounds == {TOKEN_A: "siren.caf", TOKEN_B: "alert.caf", TOKEN_C: "alert.caf"}
+    assert sounds == {TOKEN_A: "opovishchennia.caf", TOKEN_B: "alert.caf", TOKEN_C: "alert.caf"}
 
 
 async def test_live_activity_start_payload_targets_the_la_topic():

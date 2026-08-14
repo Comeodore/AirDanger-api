@@ -122,10 +122,10 @@ async def test_device_prefs_are_updated():
     app = make_app([], known_tokens=(token.lower(),))
     async with make_client(app) as client:
         response = await client.patch(
-            f"/devices/{token}", json={"warnings": False, "sound": "siren.caf"},
+            f"/devices/{token}", json={"warnings": False, "sound": "opovishchennia.caf"},
         )
     assert response.status_code == 200
-    assert app.state.ctx.db.prefs == [(token.lower(), False, "siren.caf", None, None)]
+    assert app.state.ctx.db.prefs == [(token.lower(), False, "opovishchennia.caf", None, None)]
 
 async def test_device_prefs_reject_unknown_sound_and_empty_body():
     token = "aa" * 32

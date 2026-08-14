@@ -27,19 +27,19 @@ async def test_device_upsert_and_tokens(db):
 async def test_device_prefs_update_and_survive_bare_reregistration(db):
     await db.upsert_device("aa" * 32)
     assert await db.update_device_prefs("aa" * 32, warnings=False) is True
-    assert await db.update_device_prefs("aa" * 32, sound="siren.caf") is True
+    assert await db.update_device_prefs("aa" * 32, sound="opovishchennia.caf") is True
     assert await db.update_device_prefs("bb" * 32, warnings=True) is False
 
     await db.upsert_device("aa" * 32)
     row = (await db.tokens())[0]
     assert row["warnings"] is False
-    assert row["sound"] == "siren.caf"
+    assert row["sound"] == "opovishchennia.caf"
 
 async def test_registration_with_prefs_asserts_them(db):
-    await db.upsert_device("aa" * 32, warnings=False, sound="klaxon.caf")
+    await db.upsert_device("aa" * 32, warnings=False, sound="pulse.caf")
     row = (await db.tokens())[0]
     assert row["warnings"] is False
-    assert row["sound"] == "klaxon.caf"
+    assert row["sound"] == "pulse.caf"
 
     await db.upsert_device("aa" * 32, warnings=True, sound="alert.caf")
     row = (await db.tokens())[0]
