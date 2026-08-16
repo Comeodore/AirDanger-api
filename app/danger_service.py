@@ -296,7 +296,9 @@ class DangerService:
             type="ballistic", text=text, severity=severity,
         ))
 
-    def _structured(self, text: str, marker: str) -> Evaluation | None:
+    def _structured(
+        self, text: str, marker: str, profile: ChannelProfile,
+    ) -> Evaluation | None:
         if marker in CLEAR_MARKERS:
             if geo.elsewhere_target(text):
                 return Evaluation()
@@ -311,7 +313,7 @@ class DangerService:
                 return self._ballistic_hit(text, self.severity(text))
             if geo.mentions_any_place(text):
                 return Evaluation()
-            return Evaluation(bare_target=True)
+            return Evaluation(bare_target=profile.allow_bare_target)
         if marker in STRUCTURED_WARNING_MARKERS:
             if geo.elsewhere_target(text):
                 return Evaluation()
@@ -354,7 +356,7 @@ class DangerService:
             return Evaluation()
 
         if marker is not None:
-            structured = self._structured(text, marker)
+            structured = self._structured(text, marker, profile)
             if structured is not None:
                 return structured
 

@@ -267,12 +267,12 @@ async def test_s400_working_kyiv_oblast_is_inbound_not_a_warning():
     assert ctx.push.sent == ["По Київщині відпрацювання С-400 з Брянщини."]
 
 
-async def test_a_bare_second_launch_rides_the_channels_kyiv_context():
+async def test_a_bare_second_launch_from_monitor_stays_silent():
     ctx = make_ctx()
     await ctx.handle_message(WAR, "☄ Вихід у напрямку Києва", T0)
     ctx.push.sent.clear()
     await ctx.handle_message(WAR, "☄ Другий вихід", T0 + timedelta(seconds=121))
-    assert ctx.push.sent == ["☄ Другий вихід"]
+    assert ctx.push.sent == []
 
 
 async def test_a_bare_launch_without_kyiv_context_is_silent():
