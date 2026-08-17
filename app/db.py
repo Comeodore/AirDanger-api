@@ -71,6 +71,17 @@ class Database:
     async def delete_device(self, token: str) -> None:
         await self._pool.execute("DELETE FROM devices WHERE token = $1", token)
 
+    async def clear_dead_la_token(self, la_token: str) -> None:
+        await self._pool.execute(
+            """UPDATE devices SET
+                   la_start_token = CASE WHEN la_start_token = $1 THEN NULL
+                                         ELSE la_start_token END,
+                   la_update_token = CASE WHEN la_update_token = $1 THEN NULL
+                                          ELSE la_update_token END
+               WHERE la_start_token = $1 OR la_update_token = $1""",
+            la_token,
+        )
+
     async def tokens(self) -> list[dict]:
         rows = await self._pool.fetch("SELECT token, warnings, sound FROM devices")
         return [dict(row) for row in rows]

@@ -123,11 +123,13 @@ class PushService:
         self,
         config: Config,
         on_dead_token: Callable[[str], Awaitable[None]],
+        on_dead_la_token: Callable[[str], Awaitable[None]] | None = None,
         concurrency: int = 50,
         probe_concurrency: int = PROBE_CONCURRENCY,
     ) -> None:
         self._config = config
         self._on_dead_token = on_dead_token
+        self._on_dead_la_token = on_dead_la_token
         self._semaphore = asyncio.Semaphore(concurrency)
         self._probe_semaphore = asyncio.Semaphore(probe_concurrency)
         self._apns: APNs | None = None
@@ -233,6 +235,14 @@ class PushService:
         if event == "start":
             aps["attributes-type"] = LA_ATTRIBUTES_TYPE
             aps["attributes"] = attributes or {}
+            type_name = TYPE_NAMES_UK.get(content_state.get("type"), "Небезпека")
+            title = f"{type_name} — Київ"
+            body = " ".join(content_state.get("text", "").split())[:BODY_LIMIT]
+            aps["alert"] = {
+                "title": title,
+                "body": body or title,
+                "sound": SILENT_SOUND,
+            }
         if dismissal_at is not None:
             aps["dismissal-date"] = int(dismissal_at.timestamp())
         return await self._fan_out(
@@ -291,6 +301,12 @@ class PushService:
         )
         if push_type is not PushType.LIVEACTIVITY:
             await self._retire_dead(outcomes)
+        elif self._on_dead_la_token is not None:
+            for outcome in outcomes:
+                if outcome.reason in UNUSABLE_TOKEN_REASONS:
+                    logger.info("la token %s… retired: %s",
+                                outcome.token[:8], outcome.reason)
+                    await self._on_dead_la_token(outcome.token)
         return sum(1 for outcome in outcomes if outcome.ok)
 
     async def _retire_dead(self, outcomes: list[SendOutcome]) -> None:

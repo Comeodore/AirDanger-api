@@ -304,7 +304,8 @@ async def lifespan(app: FastAPI):
     if not config.apns_configured:
         logger.error("APNs not configured — pushes are disabled")
 
-    push = PushService(config, on_dead_token=db.delete_device)
+    push = PushService(config, on_dead_token=db.delete_device,
+                       on_dead_la_token=db.clear_dead_la_token)
     ctx = AppContext(
         config=config, db=db, danger=DangerService(), ledger=ledger,
         push=push, ingest=None,
