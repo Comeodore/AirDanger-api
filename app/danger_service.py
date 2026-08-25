@@ -35,6 +35,11 @@ BALLISTIC_WORDS = [
 ]
 
 
+TARGET_WORDS = [
+    r"\bціл(ь|і|ей|ям|ями)\b",
+]
+
+
 TARGET_ON_KYIV = [
     r"\bціл\w*\b[^\n]{0,24}\b(?:на|(?:в|у)\s+бік)\s+(?:київ|києв|нас|столиц)\w*",
     r"\bна\s+київ\w*[^\n]{0,24}\bціл\w*",
@@ -96,6 +101,7 @@ BACKEND_VETO = [
     r"\bпоранен\w+",
     r"\bпожеж\w+",
     r"\bгор(ить|ять)\b",
+    r"\bпоган\w+\s+фіксац\w*",
     r"\bрозвідувальн\w+",
     r"\bдорозвідк\w+",
     r"\bмаршрут\w+",
@@ -242,6 +248,7 @@ class DangerService:
         self._irbm = matcher.compile_patterns(IRBM_DANGER)
         self._ballistic = matcher.compile_patterns(BALLISTIC_WORDS)
         self._target = matcher.compile_patterns(TARGET_ON_KYIV)
+        self._target_words = matcher.compile_patterns(TARGET_WORDS)
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
         self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
         self._ours = matcher.compile_patterns(OURS)
@@ -377,5 +384,11 @@ class DangerService:
         if profile.allow_bare_target and self._matcher.match_first(
             self._inbound_markers, text
         ):
+            if (
+                profile.target_is_ballistic
+                and self._matcher.match_first(self._target_words, text)
+                and not geo.elsewhere_target(text)
+            ):
+                return self._ballistic_hit(text, self.bare_severity(text))
             return Evaluation(bare_target=True)
         return Evaluation()

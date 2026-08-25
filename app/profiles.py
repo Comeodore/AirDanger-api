@@ -18,6 +18,7 @@ class ChannelProfile:
     structured: bool = False
     require_kyiv: bool = False
     allow_bare_target: bool = True
+    target_is_ballistic: bool = False
     trim_warning_push: bool = False
     extra_veto: tuple[str, ...] = field(default_factory=tuple)
 
@@ -39,7 +40,7 @@ WAR_MONITOR_VETO = (
 
 
 PROFILES = {
-    "kyiv_nebo": ChannelProfile(name="kyiv_nebo"),
+    "kyiv_nebo": ChannelProfile(name="kyiv_nebo", target_is_ballistic=True),
     "war_monitor": ChannelProfile(
         name="war_monitor",
         structured=True,

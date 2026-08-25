@@ -122,7 +122,7 @@ async def test_all_clear_closes_the_context_for_telegraphic_follow_ups():
     ctx = make_ctx()
     await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
     await ctx.handle_message(NEBO, "Вже все", T0 + timedelta(minutes=1))
-    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=5))
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=5))
     assert ctx.push.sent == []
 
 
@@ -152,16 +152,16 @@ async def test_drone_traffic_elsewhere_does_not_mute_another_channel():
         WAR, "🅿️ 4х реактивних БпЛА у напрямку Одеса / порт.",
         T0 + timedelta(minutes=1),
     )
-    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=3))
-    assert ctx.push.sent == ["Ще цілі"]
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Підлітають"]
 
 
 async def test_war_monitor_launch_opens_nebo_bare_window():
     ctx = make_ctx()
     await ctx.handle_message(WAR, "☄ Вихід у напрямку Києва", T0)
     ctx.push.sent.clear()
-    await ctx.handle_message(NEBO, "Ще ціль", T0 + timedelta(minutes=3))
-    assert ctx.push.sent == ["Ще ціль"]
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Підлітають"]
 
 
 async def test_drone_context_alone_does_not_open_bare():
@@ -171,7 +171,7 @@ async def test_drone_context_alone_does_not_open_bare():
         "⚠️ 10х БпЛА з Чернігівщини на Броварський район Київщини у напрямку Києва.",
         T0,
     )
-    await ctx.handle_message(NEBO, "Ще ціль", T0 + timedelta(minutes=1))
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=1))
     assert ctx.push.sent == []
 
 
@@ -181,7 +181,7 @@ async def test_all_clear_on_war_monitor_closes_the_bare_window():
     ctx.push.sent.clear()
     await ctx.handle_message(WAR, "⚪️ Відбій загрози балістики.",
                              T0 + timedelta(minutes=1))
-    await ctx.handle_message(NEBO, "Ще ціль", T0 + timedelta(minutes=3))
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
     assert ctx.push.sent == []
 
 
@@ -190,7 +190,7 @@ async def test_all_clear_on_one_channel_closes_the_other_channels_window():
     await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
     await ctx.handle_message(WAR, "⚪️ Відбій загрози балістики.",
                              T0 + timedelta(minutes=1))
-    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=3))
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
     assert ctx.push.sent == []
 
 
@@ -199,8 +199,8 @@ async def test_all_clear_about_another_city_keeps_the_kyiv_window():
     await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
     await ctx.handle_message(WAR, "⚪️ Відбій загрози БпЛА по Харкову.",
                              T0 + timedelta(minutes=1))
-    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=3))
-    assert ctx.push.sent == ["Ще цілі"]
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Підлітають"]
 
 
 async def test_no_launches_report_is_not_an_alert():
@@ -298,3 +298,26 @@ async def test_explosion_reports_stay_silent_even_with_warnings_on():
         T0 + timedelta(minutes=5),
     )
     assert ctx.push.sent == []
+
+
+async def test_a_bare_target_on_nebo_pushes_without_context():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Ціль", T0)
+    assert ctx.push.sent == ["Ціль"]
+    assert ctx.db.pushes == [(NEBO, "ballistic", "inbound", "Ціль", True)]
+
+
+async def test_a_bare_target_opens_the_window_for_later_follow_ups():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Ціль", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(seconds=125))
+    assert ctx.push.sent == ["Підлітають"]
+
+
+async def test_a_bare_target_after_the_all_clear_still_pushes():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
+    await ctx.handle_message(NEBO, "Відбій", T0 + timedelta(minutes=1))
+    await ctx.handle_message(NEBO, "Ще цілі", T0 + timedelta(minutes=5))
+    assert ctx.push.sent == ["Ще цілі"]

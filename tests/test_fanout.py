@@ -1,4 +1,5 @@
 from app.danger_service import DangerService
+from app.profiles import profile_for
 
 
 def service():
@@ -98,3 +99,36 @@ def test_inbound_wording_is_inbound():
         ev = s.evaluate(text)
         assert ev.detection is not None, text
         assert ev.detection.severity == "inbound", text
+
+
+def test_kyiv_nebo_bare_targets_are_ballistic():
+    s = service()
+    nebo = profile_for("kyiv_nebo")
+    for text in ("Ціль", "Ще ціль", "4 цілі", "Багато цілей", "Кілька цілей"):
+        ev = s.evaluate(text, nebo)
+        assert ev.detection is not None, text
+        assert ev.detection.type == "ballistic", text
+        assert ev.detection.severity == "inbound", text
+
+
+def test_kyiv_nebo_targets_elsewhere_stay_bare():
+    s = service()
+    nebo = profile_for("kyiv_nebo")
+    for text in ("Ціль на Сумщині", "Ще ціль повз Чернігівщину",
+                 "Фіксації цілі на Вінниччині"):
+        assert s.evaluate(text, nebo).detection is None, text
+
+
+def test_kyiv_nebo_target_talk_is_not_a_target():
+    s = service()
+    nebo = profile_for("kyiv_nebo")
+    for text in ("Без фіксації цілей", "Погана фіксація цілей",
+                 "Поки все, були групові цілі", "Цілий день кошмарять Шахедами"):
+        assert s.evaluate(text, nebo).detection is None, text
+
+
+def test_war_monitor_bare_targets_stay_bare():
+    s = service()
+    war = profile_for("war_monitor")
+    for text in ("Ціль", "Ще ціль", "4 цілі"):
+        assert s.evaluate(text, war).detection is None, text

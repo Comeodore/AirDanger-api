@@ -282,8 +282,8 @@ async def test_bare_target_pushes_inside_ballistic_context():
 
 async def test_bare_target_without_context_is_silent():
     ctx = make_ctx()
-    await ctx.handle_message("kyiv_nebo", "Цілі", T0)
-    await ctx.handle_message("kyiv_nebo", "Підлітають", T0 + timedelta(seconds=30))
+    await ctx.handle_message("kyiv_nebo", "Підлітають", T0)
+    await ctx.handle_message("kyiv_nebo", "Ще летять", T0 + timedelta(seconds=30))
     assert ctx.push.sent == []
 
 async def test_bare_target_is_silent_under_other_weapon_context():
@@ -297,13 +297,13 @@ async def test_safety_clears_ballistic_context():
     ctx = make_ctx()
     await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
     await ctx.handle_message("kyiv_nebo", "Відбій", T0 + timedelta(minutes=1))
-    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(minutes=2))
+    await ctx.handle_message("kyiv_nebo", "Підлітають", T0 + timedelta(minutes=2))
     assert ctx.push.sent == []
 
 async def test_ballistic_context_expires_after_ttl():
     ctx = make_ctx()
     await ctx.handle_message("kyiv_nebo", "Загроза балістики з Брянська", T0)
-    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(minutes=21))
+    await ctx.handle_message("kyiv_nebo", "Підлітають", T0 + timedelta(minutes=21))
     assert ctx.push.sent == []
 
 
@@ -330,7 +330,7 @@ async def test_cruise_context_suppresses_later_bare_targets():
     await ctx.handle_message("kyiv_nebo", "Балістика", T0)
     ctx.push.sent.clear()
     await ctx.handle_message("kyiv_nebo", "Пуски Калібрів", T0 + timedelta(minutes=1))
-    await ctx.handle_message("kyiv_nebo", "Ще цілі", T0 + timedelta(minutes=5))
+    await ctx.handle_message("kyiv_nebo", "Підлітають", T0 + timedelta(minutes=5))
     assert ctx.push.sent == []
 
 async def test_hypothetical_bare_wording_is_treated_as_warning():
