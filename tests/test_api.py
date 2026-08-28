@@ -24,8 +24,10 @@ class FakeDB:
         return rows[:limit]
 
     async def update_device_prefs(self, token, warnings=None, sound=None,
-                                  la_start_token=None, la_update_token=None):
-        self.prefs.append((token, warnings, sound, la_start_token, la_update_token))
+                                  la_start_token=None, la_update_token=None,
+                                  critical=None, critical_volume=None):
+        self.prefs.append((token, warnings, sound, la_start_token, la_update_token,
+                           critical, critical_volume))
         return token in self.known
 
 
@@ -125,7 +127,35 @@ async def test_device_prefs_are_updated():
             f"/devices/{token}", json={"warnings": False, "sound": "opovishchennia.caf"},
         )
     assert response.status_code == 200
-    assert app.state.ctx.db.prefs == [(token.lower(), False, "opovishchennia.caf", None, None)]
+    assert app.state.ctx.db.prefs == [
+        (token.lower(), False, "opovishchennia.caf", None, None, None, None)
+    ]
+
+
+async def test_device_critical_prefs_are_updated():
+    token = "aa" * 32
+    app = make_app([], known_tokens=(token,))
+    async with make_client(app) as client:
+        response = await client.patch(
+            f"/devices/{token}", json={"critical": True, "critical_volume": 0.4},
+        )
+    assert response.status_code == 200
+    assert app.state.ctx.db.prefs == [
+        (token, None, None, None, None, True, 0.4)
+    ]
+
+
+async def test_device_critical_volume_out_of_range_is_rejected():
+    token = "aa" * 32
+    app = make_app([], known_tokens=(token,))
+    async with make_client(app) as client:
+        assert (await client.patch(
+            f"/devices/{token}", json={"critical_volume": 1.5},
+        )).status_code == 422
+        assert (await client.patch(
+            f"/devices/{token}", json={"critical_volume": -0.1},
+        )).status_code == 422
+    assert app.state.ctx.db.prefs == []
 
 async def test_device_prefs_reject_unknown_sound_and_empty_body():
     token = "aa" * 32
@@ -183,5 +213,5 @@ async def test_live_activity_tokens_are_stored_via_patch():
             f"/devices/{token}", json={"la_start_token": "zz"},
         )).status_code == 422
     assert app.state.ctx.db.prefs == [
-        (token, None, None, la_token.lower(), la_token.lower()),
+        (token, None, None, la_token.lower(), la_token.lower(), None, None),
     ]

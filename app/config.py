@@ -50,7 +50,7 @@ class Config:
             apns_topic=os.environ.get("APNS_TOPIC", "comeodore.airdanger"),
             apns_sandbox=_bool("APNS_SANDBOX", default=False),
             api_key=os.environ.get("API_KEY") or None,
-            critical_alerts=_bool("CRITICAL_ALERTS", default=False),
+            critical_alerts=_bool("CRITICAL_ALERTS", default=True),
             push_cooldown_sec=int(os.environ.get("PUSH_COOLDOWN_SEC") or 120),
             push_escalation=_bool("PUSH_ESCALATION", default=True),
             push_warnings=_bool("PUSH_WARNINGS", default=True),

@@ -24,11 +24,17 @@ TOKEN_C = "cc" * 32
 ALERT_CONCURRENCY = 50
 
 
-def device(token: str, warnings: bool = True, sound: str = "alert.caf") -> dict:
-    return {"token": token, "warnings": warnings, "sound": sound}
+def device(
+    token: str, warnings: bool = True, sound: str = "alert.caf",
+    critical: bool = False, critical_volume: float | None = None,
+) -> dict:
+    return {
+        "token": token, "warnings": warnings, "sound": sound,
+        "critical": critical, "critical_volume": critical_volume,
+    }
 
 
-def make_service() -> tuple[PushService, list[str]]:
+def make_service(critical_alerts: bool = True) -> tuple[PushService, list[str]]:
     removed: list[str] = []
 
     async def on_dead(token: str) -> None:
@@ -38,7 +44,8 @@ def make_service() -> tuple[PushService, list[str]]:
         channels=["kyiv_nebo"], database_url="postgresql://unused",
         apns_key_p8_b64="", apns_key_id="", apns_team_id="",
         apns_topic="comeodore.airdanger", apns_sandbox=False, api_key=None,
-        critical_alerts=False, push_cooldown_sec=120, push_escalation=True, push_warnings=False,
+        critical_alerts=critical_alerts, push_cooldown_sec=120,
+        push_escalation=True, push_warnings=False,
         push_types=frozenset({"ballistic", "irbm"}),
         poll_sec=5.0, max_age_sec=300.0, health_window_sec=60.0,
     )
@@ -348,6 +355,99 @@ async def test_inbound_sound_follows_device_pref():
     assert delivered == 3
     sounds = {r.device_token: r.message["aps"]["sound"] for r in requests}
     assert sounds == {TOKEN_A: "opovishchennia.caf", TOKEN_B: "alert.caf", TOKEN_C: "alert.caf"}
+
+
+async def test_inbound_is_critical_only_for_devices_that_granted_it():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    delivered = await service.send_detection(
+        [device(TOKEN_A, critical=True), device(TOKEN_B)],
+        DetectedThreat(type="ballistic", text="Балістика на Київ"),
+        ts,
+    )
+    assert delivered == 2
+    by_token = {r.device_token: r.message["aps"] for r in requests}
+    assert by_token[TOKEN_A]["sound"] == {
+        "critical": 1, "name": "alert.caf", "volume": 1.0,
+    }
+    assert by_token[TOKEN_A]["interruption-level"] == "critical"
+    assert by_token[TOKEN_B]["sound"] == "alert.caf"
+    assert by_token[TOKEN_B]["interruption-level"] == "time-sensitive"
+
+
+async def test_critical_volume_follows_device_pref():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    delivered = await service.send_detection(
+        [
+            device(TOKEN_A, critical=True, critical_volume=0.35),
+            device(TOKEN_B, critical=True, sound="pulse.caf"),
+            device(TOKEN_C, critical=True, critical_volume=7.0),
+        ],
+        DetectedThreat(type="ballistic", text="Балістика на Київ"),
+        ts,
+    )
+    assert delivered == 3
+    sounds = {r.device_token: r.message["aps"]["sound"] for r in requests}
+    assert sounds == {
+        TOKEN_A: {"critical": 1, "name": "alert.caf", "volume": 0.35},
+        TOKEN_B: {"critical": 1, "name": "pulse.caf", "volume": 1.0},
+        TOKEN_C: {"critical": 1, "name": "alert.caf", "volume": 1.0},
+    }
+
+
+async def test_zero_volume_stays_a_silent_critical_alert():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_detection(
+        [device(TOKEN_A, critical=True, critical_volume=0.0)],
+        DetectedThreat(type="ballistic", text="Балістика на Київ"),
+        ts,
+    )
+    aps = requests[0].message["aps"]
+    assert aps["sound"] == {"critical": 1, "name": "alert.caf", "volume": 0.0}
+    assert aps["interruption-level"] == "critical"
+
+
+async def test_critical_alerts_can_be_killed_server_side():
+    service, _ = make_service(critical_alerts=False)
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_detection(
+        [device(TOKEN_A, critical=True, critical_volume=0.5)],
+        DetectedThreat(type="ballistic", text="Балістика на Київ"),
+        ts,
+    )
+    aps = requests[0].message["aps"]
+    assert aps["sound"] == "alert.caf"
+    assert aps["interruption-level"] == "time-sensitive"
+
+
+async def test_a_warning_stays_time_sensitive_for_critical_devices():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_detection(
+        [device(TOKEN_A, critical=True)],
+        DetectedThreat(type="ballistic", text="Загроза балістики", severity="warning"),
+        ts,
+    )
+    aps = requests[0].message["aps"]
+    assert aps["sound"] == "silent.caf"
+    assert aps["interruption-level"] == "time-sensitive"
+
+
+async def test_all_clear_stays_time_sensitive_for_critical_devices():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    await service.send_all_clear([device(TOKEN_A, critical=True)], "Відбій", ts)
+    aps = requests[0].message["aps"]
+    assert aps["sound"] == "silent.caf"
+    assert aps["interruption-level"] == "time-sensitive"
 
 
 async def test_live_activity_start_payload_targets_the_la_topic():

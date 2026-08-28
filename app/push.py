@@ -60,6 +60,8 @@ UNUSABLE_TOKEN_REASONS = MISMATCH_REASONS | {CONFIRMED_DEAD_REASON}
 ALERT_SOUND = "alert.caf"
 SILENT_SOUND = "silent.caf"
 
+DEFAULT_CRITICAL_VOLUME = 1.0
+
 SOUND_CHOICES = ("alert.caf", "pulse.caf", "opovishchennia.caf")
 
 TITLE_LIMIT = 110
@@ -103,6 +105,13 @@ def first_sentence(text: str) -> str:
     if match:
         flat = match.group(1)
     return flat.rstrip(".")
+
+
+def critical_volume(device: dict) -> float:
+    raw = device.get("critical_volume")
+    if raw is None:
+        return DEFAULT_CRITICAL_VOLUME
+    return round(min(1.0, max(0.0, float(raw))), 2)
 
 
 def push_alert(text: str, fallback: str) -> dict:
@@ -172,29 +181,34 @@ class PushService:
                 tokens, {"aps": aps, **payload}, priority=10, ttl=WARNING_TTL_SEC,
             )
 
-        groups: dict[str, list[str]] = {}
+        groups: dict[tuple[str, bool, float], list[str]] = {}
         for device in devices:
             sound_name = device.get("sound") or ALERT_SOUND
             if sound_name not in SOUND_CHOICES:
                 sound_name = ALERT_SOUND
-            groups.setdefault(sound_name, []).append(device["token"])
+            critical = self._config.critical_alerts and bool(device.get("critical"))
+            volume = critical_volume(device) if critical else DEFAULT_CRITICAL_VOLUME
+            key = (sound_name, critical, volume)
+            groups.setdefault(key, []).append(device["token"])
 
-        async def send_group(sound_name: str, tokens: list[str]) -> int:
-            if self._config.critical_alerts:
-                sound: dict | str = {"critical": 1, "name": sound_name, "volume": 1.0}
-            else:
-                sound = sound_name
+        async def send_group(key: tuple[str, bool, float], tokens: list[str]) -> int:
+            sound_name, critical, volume = key
+            sound: dict | str = sound_name
+            level = "time-sensitive"
+            if critical:
+                sound = {"critical": 1, "name": sound_name, "volume": volume}
+                level = "critical"
             aps = {
                 "alert": alert,
                 "sound": sound,
-                "interruption-level": "time-sensitive",
+                "interruption-level": level,
             }
             return await self._fan_out(
                 tokens, {"aps": aps, **payload}, priority=10, ttl=INBOUND_TTL_SEC,
             )
 
         results = await asyncio.gather(
-            *(send_group(sound, tokens) for sound, tokens in groups.items())
+            *(send_group(key, tokens) for key, tokens in groups.items())
         )
         return sum(results)
 

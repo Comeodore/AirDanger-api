@@ -22,11 +22,15 @@ async def check_api_key(request: Request, x_api_key: Annotated[str | None, Heade
 
 LA_TOKEN = Field(default=None, min_length=32, max_length=400, pattern=r"^[0-9a-fA-F]+$")
 
+CRITICAL_VOLUME = Field(default=None, ge=0.0, le=1.0)
+
 
 class DeviceRegistration(BaseModel):
     token: str = Field(min_length=32, max_length=200, pattern=r"^[0-9a-fA-F]+$")
     warnings: bool | None = None
     sound: str | None = None
+    critical: bool | None = None
+    critical_volume: float | None = CRITICAL_VOLUME
     la_start_token: str | None = LA_TOKEN
     la_update_token: str | None = LA_TOKEN
 
@@ -43,8 +47,10 @@ async def register_device(body: DeviceRegistration, request: Request) -> dict:
     await ctx.db.upsert_device(
         token, body.warnings, body.sound,
         _lower(body.la_start_token), _lower(body.la_update_token),
+        body.critical, body.critical_volume,
     )
-    logger.info("device registered %s… (%d total)", token[:8], len(await ctx.db.tokens()))
+    logger.info("device registered %s… critical=%s (%d total)",
+                token[:8], body.critical, len(await ctx.db.tokens()))
     return {"ok": True}
 
 
@@ -54,6 +60,8 @@ def _lower(token: str | None) -> str | None:
 class DevicePrefs(BaseModel):
     warnings: bool | None = None
     sound: str | None = None
+    critical: bool | None = None
+    critical_volume: float | None = CRITICAL_VOLUME
     la_start_token: str | None = LA_TOKEN
     la_update_token: str | None = LA_TOKEN
 
@@ -65,7 +73,8 @@ async def update_device(
 ) -> dict:
     ctx = _ctx(request)
     if all(value is None for value in (
-        body.warnings, body.sound, body.la_start_token, body.la_update_token,
+        body.warnings, body.sound, body.critical, body.critical_volume,
+        body.la_start_token, body.la_update_token,
     )):
         raise HTTPException(status_code=422, detail="nothing to update")
     if body.sound is not None and body.sound not in SOUND_CHOICES:
@@ -74,12 +83,15 @@ async def update_device(
     updated = await ctx.db.update_device_prefs(
         token, body.warnings, body.sound,
         _lower(body.la_start_token), _lower(body.la_update_token),
+        body.critical, body.critical_volume,
     )
     if not updated:
         raise HTTPException(status_code=404, detail="unknown device")
-    logger.info("device %s… prefs: warnings=%s sound=%s la_start=%s la_update=%s",
-                token[:8], body.warnings, body.sound,
-                bool(body.la_start_token), bool(body.la_update_token))
+    logger.info(
+        "device %s… prefs: warnings=%s sound=%s critical=%s volume=%s "
+        "la_start=%s la_update=%s",
+        token[:8], body.warnings, body.sound, body.critical, body.critical_volume,
+        bool(body.la_start_token), bool(body.la_update_token))
     return {"ok": True}
 
 @router.get("/alerts", dependencies=[Depends(check_api_key)])

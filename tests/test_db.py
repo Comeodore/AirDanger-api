@@ -46,6 +46,28 @@ async def test_registration_with_prefs_asserts_them(db):
     assert row["warnings"] is True
     assert row["sound"] == "alert.caf"
 
+async def test_critical_prefs_default_off_and_round_trip(db):
+    await db.upsert_device("aa" * 32)
+    row = (await db.tokens())[0]
+    assert row["critical"] is False
+    assert row["critical_volume"] == 1.0
+
+    assert await db.update_device_prefs(
+        "aa" * 32, critical=True, critical_volume=0.4,
+    ) is True
+    row = (await db.tokens())[0]
+    assert row["critical"] is True
+    assert row["critical_volume"] == pytest.approx(0.4)
+
+    await db.upsert_device("aa" * 32)
+    row = (await db.tokens())[0]
+    assert row["critical"] is True
+    assert row["critical_volume"] == pytest.approx(0.4)
+
+    await db.upsert_device("aa" * 32, critical=False)
+    row = (await db.tokens())[0]
+    assert row["critical"] is False
+
 async def test_delete_device(db):
     await db.upsert_device("aa" * 32)
     await db.delete_device("aa" * 32)
