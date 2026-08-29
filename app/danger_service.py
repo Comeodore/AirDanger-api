@@ -40,6 +40,18 @@ TARGET_WORDS = [
 ]
 
 
+RECON_WORDS = [
+    r"\bманевру\w+",
+    r"\bрозвіду\w+",
+    r"\bшука(?:ють|є|ти|ючи)\w*",
+]
+
+
+SERIES_WORDS = [
+    r"\bнов(?:ий|а|е|і|их|ими)\b",
+]
+
+
 TARGET_ON_KYIV = [
     r"\bціл\w*\b[^\n]{0,24}\b(?:на|(?:в|у)\s+бік)\s+(?:київ|києв|нас|столиц)\w*",
     r"\bна\s+київ\w*[^\n]{0,24}\bціл\w*",
@@ -249,6 +261,8 @@ class DangerService:
         self._ballistic = matcher.compile_patterns(BALLISTIC_WORDS)
         self._target = matcher.compile_patterns(TARGET_ON_KYIV)
         self._target_words = matcher.compile_patterns(TARGET_WORDS)
+        self._recon = matcher.compile_patterns(RECON_WORDS)
+        self._series = matcher.compile_patterns(SERIES_WORDS)
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
         self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
         self._ours = matcher.compile_patterns(OURS)
@@ -387,8 +401,11 @@ class DangerService:
             if (
                 profile.target_is_ballistic
                 and self._matcher.match_first(self._target_words, text)
+                and not self._matcher.match_first(self._recon, text)
                 and not geo.elsewhere_target(text)
             ):
                 return self._ballistic_hit(text, self.bare_severity(text))
+            if self._matcher.match_first(self._series, text):
+                return Evaluation(other_weapon=not geo.elsewhere_target(text))
             return Evaluation(bare_target=True)
         return Evaluation()

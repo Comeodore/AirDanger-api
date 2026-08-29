@@ -39,6 +39,26 @@ WAR_MONITOR_VETO = (
 )
 
 
+KYIV_MONIT_VETO = (
+    r"\bне\s+фіксую\b",
+    r"\bвідпрацюва(?:в|ла|ли|ло)\b",
+    r"\bбез\s+баліст\w*",
+    r"\bзнищен\w+",
+    r"\bпатріот\w*",
+    r"\bпетріот\w*",
+    r"\bpatriot\b",
+    r"\bне\s+по\s+нам\b",
+    r"\bрозвідспільнот\w*",
+    r"\bнадійшла\s+інформаці\w*",
+    r"\bпо\s+плану\s+противник\w*",
+    r"^\W*ураженн\w+",
+    r"\bзбільшив\w*",
+    r"\bзеленськ\w+",
+    r"\bщомісяц\w*",
+    r"^\W*✍",
+)
+
+
 PROFILES = {
     "kyiv_nebo": ChannelProfile(name="kyiv_nebo", target_is_ballistic=True),
     "war_monitor": ChannelProfile(
@@ -48,6 +68,11 @@ PROFILES = {
         allow_bare_target=False,
         trim_warning_push=True,
         extra_veto=WAR_MONITOR_VETO,
+    ),
+    "kyiv_monit0ring": ChannelProfile(
+        name="kyiv_monit0ring",
+        target_is_ballistic=True,
+        extra_veto=KYIV_MONIT_VETO,
     ),
 }
 
