@@ -47,8 +47,11 @@ RECON_WORDS = [
 ]
 
 
-SERIES_WORDS = [
+DRONE_TRACK_WORDS = [
     r"\bнов(?:ий|а|е|і|их|ими)\b",
+    r"\bзаходить\b",
+    r"\bзаходять\b",
+    r"\bзаходити\b",
 ]
 
 
@@ -262,7 +265,7 @@ class DangerService:
         self._target = matcher.compile_patterns(TARGET_ON_KYIV)
         self._target_words = matcher.compile_patterns(TARGET_WORDS)
         self._recon = matcher.compile_patterns(RECON_WORDS)
-        self._series = matcher.compile_patterns(SERIES_WORDS)
+        self._drone_track = matcher.compile_patterns(DRONE_TRACK_WORDS)
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
         self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
         self._ours = matcher.compile_patterns(OURS)
@@ -405,7 +408,7 @@ class DangerService:
                 and not geo.elsewhere_target(text)
             ):
                 return self._ballistic_hit(text, self.bare_severity(text))
-            if self._matcher.match_first(self._series, text):
+            if self._matcher.match_first(self._drone_track, text):
                 return Evaluation(other_weapon=not geo.elsewhere_target(text))
             return Evaluation(bare_target=True)
         return Evaluation()

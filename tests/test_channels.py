@@ -518,3 +518,33 @@ async def test_monit0ring_prose_targets_are_not_launches():
         await ctx.handle_message(MONIT, text, T0)
         assert ctx.push.sent == [], text
         assert ctx.db.pushes == [], text
+
+
+async def test_a_run_in_over_the_city_is_a_drone_track():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(MONIT, "Загроза балістики з Курська.", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(MONIT, "Заходить на правий берег Києва.",
+                             T0 + timedelta(minutes=2))
+    assert ctx.push.sent == []
+    assert ctx.db.pushes == [
+        (MONIT, "ballistic", "warning", "Загроза балістики з Курська.", True),
+    ]
+
+
+async def test_a_run_in_closes_the_ballistic_window_behind_it():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(MONIT, "Загроза балістики з Курська.", T0)
+    await ctx.handle_message(MONIT, "Заходить в Київ по Дніпру.",
+                             T0 + timedelta(minutes=1))
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "Підлітає", T0 + timedelta(minutes=4))
+    assert ctx.push.sent == []
+
+
+async def test_a_western_bearing_is_not_a_run_in():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "Ще цілі із заходу", T0 + timedelta(minutes=4))
+    assert ctx.push.sent == ["Ще цілі із заходу"]
