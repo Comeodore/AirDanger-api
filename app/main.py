@@ -101,6 +101,8 @@ class AppContext:
                 logger.debug("%s: %s not in PUSH_TYPES — %s", source, threat.type, short)
                 return
             self.sky.mark_ballistic(ts)
+            threat = replace(threat, severity=self.danger.siren_severity(
+                text, threat.severity, profile))
             if threat.severity == "warning" and not self.config.push_warnings:
                 logger.info("%s: %s warning silent, PUSH_WARNINGS off — %s",
                             source, threat.type, short)
@@ -110,7 +112,8 @@ class AppContext:
                 logger.info("%s: bare target dropped, no ballistic context — %s",
                             source, short)
                 return
-            severity = self.danger.bare_severity(text)
+            severity = self.danger.siren_severity(
+                text, self.danger.bare_severity(text), profile)
             if severity == "warning" and not self.config.push_warnings:
                 logger.info("%s: bare warning silent, PUSH_WARNINGS off — %s",
                             source, short)

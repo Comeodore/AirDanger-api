@@ -327,12 +327,27 @@ MONIT = "kyiv_monit0ring"
 
 
 async def test_a_launch_call_on_monit0ring_pushes():
-    ctx = make_ctx()
+    ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(MONIT, "Вихід балістики з Брянска.", T0)
     assert ctx.push.sent == ["Вихід балістики з Брянска."]
     assert ctx.db.pushes == [
-        (MONIT, "ballistic", "inbound", "Вихід балістики з Брянска.", True),
+        (MONIT, "ballistic", "warning", "Вихід балістики з Брянска.", True),
     ]
+
+
+async def test_monit0ring_sirens_only_once_kyiv_is_named():
+    ctx = make_ctx()
+    await ctx.handle_message(MONIT, "Балістика на Київ/передмістя.", T0)
+    assert ctx.db.pushes == [
+        (MONIT, "ballistic", "inbound", "Балістика на Київ/передмістя.", True),
+    ]
+
+
+async def test_a_kyiv_district_counts_as_naming_kyiv():
+    for text in ("Є ціль, центр!", "Циркон на Троєщину", "Балістика на Оболонь"):
+        ctx = make_ctx()
+        await ctx.handle_message(MONIT, text, T0)
+        assert ctx.db.pushes[0][2] == "inbound", text
 
 
 async def test_monit0ring_takes_the_slot_when_it_is_first():
@@ -475,9 +490,9 @@ async def test_live_firing_is_still_a_launch():
     ctx = make_ctx()
     await ctx.handle_message(WAR, "По Київщині відпрацювання С-400 з Брянщини.", T0)
     assert ctx.push.sent == ["По Київщині відпрацювання С-400 з Брянщини."]
-    ctx = make_ctx()
+    ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(MONIT, "Вихід С-400 з Брянська.", T0)
-    assert ctx.push.sent == ["Вихід С-400 з Брянська."]
+    assert ctx.db.pushes[0][2] == "warning"
 
 
 async def test_a_past_tense_salvo_recap_is_not_a_launch():
@@ -563,7 +578,7 @@ async def test_a_forecast_for_the_night_is_a_warning_not_a_siren():
 async def test_a_strike_in_progress_outranks_the_hours_it_mentions():
     ctx = make_ctx()
     await ctx.handle_message(
-        MONIT, "Криють балістикою. Я вас попереджав про 72 години.", T0)
+        NEBO, "Криють балістикою. Я вас попереджав про 72 години.", T0)
     assert ctx.db.pushes[0][2] == "inbound"
 
 

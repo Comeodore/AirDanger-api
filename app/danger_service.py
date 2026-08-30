@@ -57,6 +57,11 @@ DRONE_TRACK_WORDS = [
 ]
 
 
+SIREN_LOCAL = [
+    r"\bцентр\w*",
+]
+
+
 TARGET_ON_KYIV = [
     r"\bціл\w*\b[^\n]{0,24}\b(?:на|(?:в|у)\s+бік)\s+(?:київ|києв|нас|столиц)\w*",
     r"\bна\s+київ\w*[^\n]{0,24}\bціл\w*",
@@ -271,6 +276,7 @@ class DangerService:
         self._target_words = matcher.compile_patterns(TARGET_WORDS)
         self._recon = matcher.compile_patterns(RECON_WORDS)
         self._drone_track = matcher.compile_patterns(DRONE_TRACK_WORDS)
+        self._siren_local = matcher.compile_patterns(SIREN_LOCAL)
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
         self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
         self._ours = matcher.compile_patterns(OURS)
@@ -305,6 +311,17 @@ class DangerService:
         if self._matcher.match_first(self._warning_markers, text):
             return "warning"
         return "inbound"
+
+    def siren_severity(
+        self, text: str, severity: str, profile: ChannelProfile,
+    ) -> str:
+        if severity != "inbound" or not profile.siren_needs_kyiv:
+            return severity
+        if geo.mentions_kyiv(text) or self._matcher.match_first(
+            self._siren_local, text
+        ):
+            return "inbound"
+        return "warning"
 
     def aimed_elsewhere(self, text: str) -> bool:
         return geo.aimed_elsewhere(text)

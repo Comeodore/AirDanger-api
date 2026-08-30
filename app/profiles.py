@@ -19,6 +19,7 @@ class ChannelProfile:
     require_kyiv: bool = False
     allow_bare_target: bool = True
     target_is_ballistic: bool = False
+    siren_needs_kyiv: bool = False
     trim_warning_push: bool = False
     extra_veto: tuple[str, ...] = field(default_factory=tuple)
 
@@ -72,6 +73,7 @@ PROFILES = {
     "kyiv_monit0ring": ChannelProfile(
         name="kyiv_monit0ring",
         target_is_ballistic=True,
+        siren_needs_kyiv=True,
         extra_veto=KYIV_MONIT_VETO,
     ),
 }
