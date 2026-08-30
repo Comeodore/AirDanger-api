@@ -573,3 +573,44 @@ async def test_a_bare_weapon_name_stays_a_siren():
         await ctx.handle_message(NEBO, text, T0)
         assert ctx.push.sent == [text], text
         assert ctx.db.pushes[0][2] == "inbound", text
+
+
+async def test_an_approach_narration_is_a_drone_track():
+    for text in ("Перший наближається до Вишгорода.", "Курс на Бортничі",
+                 "Другий повторює курс попереднього"):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(NEBO, "Загроза балістики з Курська", T0)
+        ctx.push.sent.clear()
+        await ctx.handle_message(MONIT, text, T0 + timedelta(minutes=2))
+        assert ctx.push.sent == [], text
+
+
+async def test_a_salvo_closing_in_is_still_ballistic():
+    ctx = make_ctx()
+    await ctx.handle_message(
+        MONIT, "Повторні залпи балістики та цирконів на Київ, перші наближаються.", T0)
+    assert ctx.db.pushes[0][2] == "inbound"
+
+
+async def test_a_target_passing_a_region_stays_a_bare_target():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "Ще ціль повз Чернігівщину",
+                             T0 + timedelta(minutes=4))
+    assert ctx.push.sent == ["Ще ціль повз Чернігівщину"]
+
+
+async def test_a_launch_noun_arms_but_the_verb_does_not():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "Ще пуски", T0 + timedelta(minutes=4))
+    assert ctx.push.sent == ["Ще пуски"]
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(
+        MONIT, "МакДональдс на Петра Григоренкa, правда що в паркінг не пускали?",
+        T0 + timedelta(minutes=4))
+    assert ctx.push.sent == []
