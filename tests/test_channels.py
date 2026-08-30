@@ -548,3 +548,28 @@ async def test_a_western_bearing_is_not_a_run_in():
     ctx.push.sent.clear()
     await ctx.handle_message(NEBO, "Ще цілі із заходу", T0 + timedelta(minutes=4))
     assert ctx.push.sent == ["Ще цілі із заходу"]
+
+
+async def test_a_forecast_for_the_night_is_a_warning_not_a_siren():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        MONIT,
+        "Сьогодні вночі останні 24 години на балістику від «вагомого» джерела.",
+        T0,
+    )
+    assert ctx.db.pushes[0][2] == "warning"
+
+
+async def test_a_strike_in_progress_outranks_the_hours_it_mentions():
+    ctx = make_ctx()
+    await ctx.handle_message(
+        MONIT, "Криють балістикою. Я вас попереджав про 72 години.", T0)
+    assert ctx.db.pushes[0][2] == "inbound"
+
+
+async def test_a_bare_weapon_name_stays_a_siren():
+    for text in ("Ще Циркони", "Балістика !!!", "Циркон", "Балістика + Циркони"):
+        ctx = make_ctx()
+        await ctx.handle_message(NEBO, text, T0)
+        assert ctx.push.sent == [text], text
+        assert ctx.db.pushes[0][2] == "inbound", text
