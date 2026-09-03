@@ -323,10 +323,10 @@ async def test_a_bare_target_after_the_all_clear_still_pushes():
     assert ctx.push.sent == ["Ще цілі"]
 
 
-MONIT = "kyiv_monit0ring"
+MONIT = "kyiv_m0nitoring"
 
 
-async def test_a_launch_call_on_monit0ring_pushes():
+async def test_a_launch_call_on_m0nitoring_pushes():
     ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(MONIT, "Вихід балістики з Брянска.", T0)
     assert ctx.push.sent == ["Вихід балістики з Брянска."]
@@ -335,7 +335,7 @@ async def test_a_launch_call_on_monit0ring_pushes():
     ]
 
 
-async def test_monit0ring_sirens_only_once_kyiv_is_named():
+async def test_m0nitoring_sirens_only_once_kyiv_is_named():
     ctx = make_ctx()
     await ctx.handle_message(MONIT, "Балістика на Київ/передмістя.", T0)
     assert ctx.db.pushes == [
@@ -350,7 +350,7 @@ async def test_a_kyiv_district_counts_as_naming_kyiv():
         assert ctx.db.pushes[0][2] == "inbound", text
 
 
-async def test_monit0ring_takes_the_slot_when_it_is_first():
+async def test_m0nitoring_takes_the_slot_when_it_is_first():
     ctx = make_ctx()
     await ctx.handle_message(MONIT, "Балістика на Київ/передмістя.", T0)
     await ctx.handle_message(NEBO, "Цілі на Київ з Брянська",
@@ -358,7 +358,7 @@ async def test_monit0ring_takes_the_slot_when_it_is_first():
     assert ctx.push.sent == ["Балістика на Київ/передмістя."]
 
 
-async def test_monit0ring_warnings_and_launches_share_one_stream():
+async def test_m0nitoring_warnings_and_launches_share_one_stream():
     ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(MONIT, "Загроза балістики з Курська.", T0)
     await ctx.handle_message(NEBO, "Ціль з Курська", T0 + timedelta(seconds=17))
@@ -385,7 +385,7 @@ NOT_A_LAUNCH_ON_MONIT0RING = (
 )
 
 
-async def test_monit0ring_news_and_negations_stay_silent():
+async def test_m0nitoring_news_and_negations_stay_silent():
     for text in NOT_A_LAUNCH_ON_MONIT0RING:
         ctx = make_ctx(push_warnings=True)
         await ctx.handle_message(MONIT, text, T0)
@@ -393,7 +393,7 @@ async def test_monit0ring_news_and_negations_stay_silent():
         assert ctx.db.pushes == [], text
 
 
-async def test_the_monit0ring_veto_does_not_reach_other_channels():
+async def test_the_m0nitoring_veto_does_not_reach_other_channels():
     ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(WAR, "☄ Вихід балістики Брянськ", T0)
     assert ctx.push.sent == ["☄ Вихід балістики Брянськ"]
@@ -508,7 +508,7 @@ async def test_live_s400_firing_on_war_monitor_still_alerts():
     assert ctx.push.sent == ["По Київщині відпрацювання С-400 з Брянщини."]
 
 
-async def test_a_bare_target_on_monit0ring_is_ballistic():
+async def test_a_bare_target_on_m0nitoring_is_ballistic():
     ctx = make_ctx()
     await ctx.handle_message(MONIT, "Є ціль, центр!", T0)
     assert ctx.push.sent == ["Є ціль, центр!"]
@@ -527,7 +527,7 @@ NOT_A_TARGET_ON_MONIT0RING = (
 )
 
 
-async def test_monit0ring_prose_targets_are_not_launches():
+async def test_m0nitoring_prose_targets_are_not_launches():
     for text in NOT_A_TARGET_ON_MONIT0RING:
         ctx = make_ctx(push_warnings=True)
         await ctx.handle_message(MONIT, text, T0)

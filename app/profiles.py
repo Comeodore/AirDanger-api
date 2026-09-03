@@ -70,8 +70,8 @@ PROFILES = {
         trim_warning_push=True,
         extra_veto=WAR_MONITOR_VETO,
     ),
-    "kyiv_monit0ring": ChannelProfile(
-        name="kyiv_monit0ring",
+    "kyiv_m0nitoring": ChannelProfile(
+        name="kyiv_m0nitoring",
         target_is_ballistic=True,
         siren_needs_kyiv=True,
         extra_veto=KYIV_MONIT_VETO,
