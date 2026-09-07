@@ -152,16 +152,16 @@ async def test_drone_traffic_elsewhere_does_not_mute_another_channel():
         WAR, "🅿️ 4х реактивних БпЛА у напрямку Одеса / порт.",
         T0 + timedelta(minutes=1),
     )
-    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
-    assert ctx.push.sent == ["Підлітають"]
+    await ctx.handle_message(NEBO, "Підлітають до нас", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Підлітають до нас"]
 
 
 async def test_war_monitor_launch_opens_nebo_bare_window():
     ctx = make_ctx()
     await ctx.handle_message(WAR, "☄ Вихід у напрямку Києва", T0)
     ctx.push.sent.clear()
-    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
-    assert ctx.push.sent == ["Підлітають"]
+    await ctx.handle_message(NEBO, "Підлітають до нас", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Підлітають до нас"]
 
 
 async def test_drone_context_alone_does_not_open_bare():
@@ -199,8 +199,8 @@ async def test_all_clear_about_another_city_keeps_the_kyiv_window():
     await ctx.handle_message(NEBO, "Загроза балістики з Брянська", T0)
     await ctx.handle_message(WAR, "⚪️ Відбій загрози БпЛА по Харкову.",
                              T0 + timedelta(minutes=1))
-    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=3))
-    assert ctx.push.sent == ["Підлітають"]
+    await ctx.handle_message(NEBO, "Підлітають до нас", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Підлітають до нас"]
 
 
 async def test_no_launches_report_is_not_an_alert():
@@ -311,8 +311,8 @@ async def test_a_bare_target_opens_the_window_for_later_follow_ups():
     ctx = make_ctx()
     await ctx.handle_message(NEBO, "Ціль", T0)
     ctx.push.sent.clear()
-    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(seconds=125))
-    assert ctx.push.sent == ["Підлітають"]
+    await ctx.handle_message(NEBO, "Підлітають до Києва", T0 + timedelta(seconds=125))
+    assert ctx.push.sent == ["Підлітають до Києва"]
 
 
 async def test_a_bare_target_after_the_all_clear_still_pushes():
@@ -403,8 +403,8 @@ async def test_a_warning_opens_the_bare_target_window():
     ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(NEBO, "Загроза балістики з Курська", T0)
     ctx.push.sent.clear()
-    await ctx.handle_message(NEBO, "Підлітає", T0 + timedelta(minutes=4))
-    assert ctx.push.sent == ["Підлітає"]
+    await ctx.handle_message(NEBO, "Підлітає до нас", T0 + timedelta(minutes=4))
+    assert ctx.push.sent == ["Підлітає до нас"]
 
 
 async def test_a_new_one_is_a_drone_continuation_not_a_ballistic_target():
@@ -450,8 +450,8 @@ async def test_a_warning_after_a_launch_keeps_the_window_open():
     await ctx.handle_message(NEBO, "Загроза балістики з Курська",
                              T0 + timedelta(minutes=1))
     ctx.push.sent.clear()
-    await ctx.handle_message(NEBO, "Підлітають", T0 + timedelta(minutes=4))
-    assert ctx.push.sent == ["Підлітають"]
+    await ctx.handle_message(NEBO, "Підлітають, лівий берег", T0 + timedelta(minutes=4))
+    assert ctx.push.sent == ["Підлітають, лівий берег"]
 
 
 async def test_drone_recon_wording_is_not_a_ballistic_target():
@@ -607,21 +607,21 @@ async def test_a_salvo_closing_in_is_still_ballistic():
     assert ctx.db.pushes[0][2] == "inbound"
 
 
-async def test_a_target_passing_a_region_stays_a_bare_target():
+async def test_a_target_passing_another_region_names_no_kyiv_and_stays_silent():
     ctx = make_ctx()
     await ctx.handle_message(NEBO, "Балістика на Київ", T0)
     ctx.push.sent.clear()
     await ctx.handle_message(NEBO, "Ще ціль повз Чернігівщину",
                              T0 + timedelta(minutes=4))
-    assert ctx.push.sent == ["Ще ціль повз Чернігівщину"]
+    assert ctx.push.sent == []
 
 
 async def test_a_launch_noun_arms_but_the_verb_does_not():
     ctx = make_ctx()
     await ctx.handle_message(NEBO, "Балістика на Київ", T0)
     ctx.push.sent.clear()
-    await ctx.handle_message(NEBO, "Ще пуски", T0 + timedelta(minutes=4))
-    assert ctx.push.sent == ["Ще пуски"]
+    await ctx.handle_message(NEBO, "Ще пуски з Брянська", T0 + timedelta(minutes=4))
+    assert ctx.push.sent == ["Ще пуски з Брянська"]
     ctx = make_ctx()
     await ctx.handle_message(NEBO, "Балістика на Київ", T0)
     ctx.push.sent.clear()
@@ -629,3 +629,113 @@ async def test_a_launch_noun_arms_but_the_verb_does_not():
         MONIT, "МакДональдс на Петра Григоренкa, правда що в паркінг не пускали?",
         T0 + timedelta(minutes=4))
     assert ctx.push.sent == []
+
+
+async def test_a_timed_forecast_is_a_warning_not_a_siren():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        MONIT,
+        "Де-факто атака вже розпочата, реактивні дрони атакують Київщину, "
+        "після 00:10 полетить балістика.",
+        T0,
+    )
+    assert ctx.db.pushes[0][2] == "warning"
+
+
+async def test_a_weapon_that_has_flown_stays_a_siren():
+    for text in ("Балістика полетіла", "Полетіли 2 балістики з Брянська"):
+        ctx = make_ctx()
+        await ctx.handle_message(NEBO, text, T0)
+        assert ctx.db.pushes[0][2] == "inbound", text
+
+
+ABSENT_THREAT = (
+    "Загроза балістики відсутня.\n\nВорожі цілі в області не спостерігаються.",
+    "Відсутня загроза по балістиці зараз.\n\nВорожі цілі в області не спостерігаються.",
+)
+
+
+async def test_an_absent_threat_is_an_all_clear_not_a_warning():
+    for text in ABSENT_THREAT:
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(
+            MONIT, "Перша ціль наближається, йдуть парами по 2.", T0)
+        await ctx.handle_message(MONIT, text, T0 + timedelta(minutes=21))
+        assert ctx.push.cleared == [text], text
+        assert [p[2] for p in ctx.db.pushes] == ["warning", "clear"], text
+
+
+async def test_an_absent_threat_does_not_arm_the_bare_window():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        MONIT, "Перша ціль наближається, йдуть парами по 2.", T0)
+    await ctx.handle_message(MONIT, ABSENT_THREAT[0], T0 + timedelta(minutes=21))
+    await ctx.handle_message(
+        NEBO, "З Черкащини ще 2 летять, ймовірно через них досі тримають тривогу",
+        T0 + timedelta(minutes=32))
+    assert ctx.push.sent == ["Перша ціль наближається, йдуть парами по 2."]
+
+
+async def test_nothing_observed_is_not_a_target():
+    for text in (
+        "Київ - не спостерігається цілей.",
+        "Понад 80 хвилин вже не спостерігається жодних цілей в області та Києві, "
+        "але тривогу потримаємо.",
+        "Ворожі цілі в області не спостерігаються.",
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(MONIT, text, T0)
+        assert ctx.push.sent == [], text
+        assert ctx.db.pushes == [], text
+
+
+async def test_a_bare_target_that_names_no_kyiv_stays_silent_even_in_context():
+    for text in (
+        "З Черкащини ще 2 летять, ймовірно через них досі тримають тривогу",
+        "Підлітають",
+        "Ще 2 летять",
+        "З Чернігівщини ще летять",
+        "Ще пуски",
+    ):
+        ctx = make_ctx()
+        await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+        ctx.push.sent.clear()
+        await ctx.handle_message(NEBO, text, T0 + timedelta(minutes=4))
+        assert ctx.push.sent == [], text
+
+
+async def test_a_bare_target_over_kyiv_rides_the_context():
+    for text in (
+        "Лівий берег - підлітає",
+        "Летить на Центр",
+        "Жуляни - підлітають",
+        "Летять сюди",
+        "Летять низько над містом",
+        "З Брянська летять також",
+        "Підлітають до Борисполя",
+    ):
+        ctx = make_ctx()
+        await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+        ctx.push.sent.clear()
+        await ctx.handle_message(NEBO, text, T0 + timedelta(minutes=4))
+        assert ctx.push.sent == [text], text
+
+
+async def test_declined_suburb_names_count_as_kyiv():
+    ctx = make_ctx()
+    await ctx.handle_message(NEBO, "Балістика на Київ", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(MONIT, "Ще 2 ракети по Борисполю.",
+                             T0 + timedelta(minutes=3))
+    assert ctx.db.pushes[-1][2:5] == ("inbound", "Ще 2 ракети по Борисполю.", True)
+    for text in ("Дрон біля Ірпеня.", "Бандеролі в бік Обухова.",
+                 "Шахед над Голосієвом", "Реактивний над Харківським масивом"):
+        ctx = make_ctx()
+        await ctx.handle_message(MONIT, text, T0)
+        assert ctx.sky.other_live(T0), text
+
+
+async def test_a_river_bank_places_a_bare_target_but_does_not_lift_the_siren_demote():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(MONIT, "Увага весь правий берег, кількісна ціль!", T0)
+    assert ctx.db.pushes[0][2] == "warning"

@@ -62,6 +62,16 @@ SIREN_LOCAL = [
 ]
 
 
+OUR_SKY = [
+    r"\b(?:на|до|по)\s+нас\b",
+    r"\b(?:у|в)\s+наш\s+бік\b",
+    r"\bнад\s+(?:нами|містом)\b",
+    r"\bсюди\b",
+    r"\bберег\w*",
+    r"\b(?:ліво|право)бережж\w*",
+]
+
+
 TARGET_ON_KYIV = [
     r"\bціл\w*\b[^\n]{0,24}\b(?:на|(?:в|у)\s+бік)\s+(?:київ|києв|нас|столиц)\w*",
     r"\bна\s+київ\w*[^\n]{0,24}\bціл\w*",
@@ -94,13 +104,6 @@ OTHER_WEAPONS = [
 ]
 
 
-OURS = [
-    r"\bкиїв\w*",
-    r"\bкиєв\w*",
-    r"\b(на|до) нас\b",
-]
-
-
 IGNORE = [
     r"\b(банк[аи]|збір|збори|донат\w*|гривень|грн|реквізит\w*|monobank|підписуйтесь|перехоплювач\w*)\b",
 ]
@@ -112,6 +115,7 @@ BACKEND_VETO = [
     r"\bнемає\b",
     r"\bне летить\b",
     r"\bне фіксується\b",
+    r"\bне спостеріга\w+",
     r"\bне видно\b",
     r"\bбільше не\b",
     r"\bперестал\w+",
@@ -170,13 +174,18 @@ BACKEND_VETO = [
 ]
 
 
+THREAT_ABSENT = [
+    r"\bзагроз\w*\s+(?:\w+\s+){0,3}відсутн\w+",
+    r"\bвідсутн\w+\s+(?:\w+\s+){0,2}загроз\w*",
+]
+
 ALL_CLEAR = [
     r"\bвідбій\b",
     r"\bатака завершена\b",
     r"\bціл(?:і|ей) (?:зникл[аи]?|більше немає|вже немає|немає)\b",
     r"\b(?:без цілей|локаційно чисто)\b",
     r"\b(?:наразі )?загроз[аи] [^\n]{0,48}\bнемає\b",
-]
+] + THREAT_ABSENT
 
 
 CLEAR_FUTURE = [
@@ -236,6 +245,7 @@ WARNING_MARKERS = [
     r"\bпротягом ночі\b",
     r"\bвночі\b",
     r"\b\d+\s+годин\w*",
+    r"\bполет(?:ить|ять|іти)\b",
     r"\bпам'ятати\b",
     r"\b(з|із)\s+(курськ|курьск|курск|брянськ|брянск|воронеж|таганрог|орл|шаталов|міллеров|крим|капустин)\w*",
     r"\b(курськ|курьск|курск|брянськ|брянск|воронеж|таганрог|шаталов|міллеров)\w*",
@@ -263,7 +273,7 @@ class DangerService:
     def __init__(self) -> None:
         matcher = DangerDetector([], [])
         self._matcher = matcher
-        self._safety = matcher.compile_patterns(SAFETY)
+        self._safety = matcher.compile_patterns(SAFETY + THREAT_ABSENT)
         self._all_clear = matcher.compile_patterns(ALL_CLEAR)
         self._clear_future = matcher.compile_patterns(CLEAR_FUTURE)
         self._clear_other_scope = matcher.compile_patterns(CLEAR_OTHER_SCOPE)
@@ -273,13 +283,13 @@ class DangerService:
         self._irbm = matcher.compile_patterns(IRBM_DANGER)
         self._ballistic = matcher.compile_patterns(BALLISTIC_WORDS)
         self._target = matcher.compile_patterns(TARGET_ON_KYIV)
+        self._our_sky = matcher.compile_patterns(OUR_SKY)
         self._target_words = matcher.compile_patterns(TARGET_WORDS)
         self._recon = matcher.compile_patterns(RECON_WORDS)
         self._drone_track = matcher.compile_patterns(DRONE_TRACK_WORDS)
         self._siren_local = matcher.compile_patterns(SIREN_LOCAL)
         self._drone_words = matcher.compile_patterns(DRONE_WORDS)
         self._other_weapons = matcher.compile_patterns(OTHER_WEAPONS)
-        self._ours = matcher.compile_patterns(OURS)
         self._bare_live = matcher.compile_patterns(BARE_LIVE_MARKERS)
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
         self._warning_markers = matcher.compile_patterns(WARNING_MARKERS)
@@ -325,6 +335,12 @@ class DangerService:
 
     def aimed_elsewhere(self, text: str) -> bool:
         return geo.aimed_elsewhere(text)
+
+    def toward_kyiv(self, text: str) -> bool:
+        return geo.kyiv_bound(text) or bool(
+            self._matcher.match_first(self._siren_local, text)
+            or self._matcher.match_first(self._our_sky, text)
+        )
 
     def _vetoed(self, text: str, profile: ChannelProfile) -> bool:
         if self._matcher.match_first(self._veto, text):
@@ -432,5 +448,5 @@ class DangerService:
                 return self._ballistic_hit(text, self.bare_severity(text))
             if self._matcher.match_first(self._drone_track, text):
                 return Evaluation(other_weapon=not geo.elsewhere_target(text))
-            return Evaluation(bare_target=True)
+            return Evaluation(bare_target=self.toward_kyiv(text))
         return Evaluation()
