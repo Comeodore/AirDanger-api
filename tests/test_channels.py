@@ -407,6 +407,57 @@ async def test_a_warning_opens_the_bare_target_window():
     assert ctx.push.sent == ["Підлітає до нас"]
 
 
+FORECASTS = (
+    "Є попередження про можливе застосування балістики протягом ночі",
+    "На цю ніч також діє підвищена загроза по балістиці та Цирконах, "
+    "якщо вночі не відстріляються — на наступну ніч таке саме",
+    "Також готується балістика по Києву/агломерації протягом ночі",
+)
+
+
+async def test_a_forecast_is_pushed_as_a_warning_but_opens_no_window():
+    for text in FORECASTS:
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(NEBO, text, T0)
+        assert ctx.push.sent == [text], text
+        assert ctx.db.pushes[0][2] == "warning", text
+        await ctx.handle_message(NEBO, "Підлітає до нас", T0 + timedelta(minutes=4))
+        assert ctx.push.sent == [text], text
+
+
+async def test_a_forecast_does_not_carry_a_donetsk_wave_onto_kyiv():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(NEBO, FORECASTS[1], T0)
+    await ctx.handle_message(
+        MONIT, "4-5 їх. Покидають нас в напрямку Житомира.", T0 + timedelta(minutes=1))
+    await ctx.handle_message(
+        MONIT,
+        "Ще з Донецька вилетіли до нас до 5шт. Ці з високою долею ймовірності "
+        "будуть на Київ летіть(як мінімум маршрут звичний зараз).",
+        T0 + timedelta(minutes=3))
+    assert ctx.push.sent == [FORECASTS[1]]
+
+
+async def test_a_launch_from_donetsk_is_a_drone_even_inside_a_live_window():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(MONIT, "Загроза балістики з Курська.", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(
+        MONIT, "Ще з Донецька вилетіли до нас до 5шт.", T0 + timedelta(minutes=2))
+    assert ctx.push.sent == []
+    await ctx.handle_message(NEBO, "Підлітає до нас", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == []
+
+
+async def test_a_live_strike_with_an_hour_count_still_opens_the_window():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        MONIT, "Криють балістикою. Я вас попереджав про 72 години.", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(NEBO, "Підлітає до нас", T0 + timedelta(minutes=3))
+    assert ctx.push.sent == ["Підлітає до нас"]
+
+
 async def test_a_new_one_is_a_drone_continuation_not_a_ballistic_target():
     ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(NEBO, "Загроза балістики з Курська", T0)

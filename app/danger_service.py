@@ -86,6 +86,7 @@ DRONE_WORDS = [
     r"\bдрон\w*\b",
     r"\bреактивн\w+",
     r"\bреактив\b",
+    r"\bдонецьк\w*",
 ]
 
 
@@ -232,6 +233,15 @@ INBOUND_MARKERS = [
     r"\b\d+\s*(?:балістик|циркон|кинджал|іскандер)\w*",
     r"\b\d+\s*[-–]?\s*\d*\s*ракет\w*",
 ]
+FORECAST_MARKERS = [
+    r"\bпротягом ночі\b",
+    r"\bвночі\b",
+    r"\bна (?:цю )?ніч\b",
+    r"\b\d+\s+годин\w*",
+    r"\bполет(?:ить|ять|іти)\b",
+    r"\bпам'ятати\b",
+    r"\bпопередженн\w+",
+]
 WARNING_MARKERS = [
     r"\bзагроз\w+",
     r"\bзліт\w*\b",
@@ -268,6 +278,7 @@ class Evaluation:
     other_weapon: bool = False
     bare_target: bool = False
     all_clear: bool = False
+    forecast: bool = False
 
 class DangerService:
     def __init__(self) -> None:
@@ -293,6 +304,7 @@ class DangerService:
         self._bare_live = matcher.compile_patterns(BARE_LIVE_MARKERS)
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
         self._warning_markers = matcher.compile_patterns(WARNING_MARKERS)
+        self._forecast_markers = matcher.compile_patterns(FORECAST_MARKERS)
         self._profile_veto: dict[str, list] = {}
 
     def is_all_clear(self, text: str) -> bool:
@@ -353,10 +365,16 @@ class DangerService:
             self._profile_veto[profile.name] = cached
         return bool(self._matcher.match_first(cached, text))
 
+    def is_forecast(self, text: str, severity: str) -> bool:
+        return severity == "warning" and bool(
+            self._matcher.match_first(self._forecast_markers, text)
+        )
+
     def _ballistic_hit(self, text: str, severity: str) -> Evaluation:
-        return Evaluation(detection=DetectedThreat(
-            type="ballistic", text=text, severity=severity,
-        ))
+        return Evaluation(
+            detection=DetectedThreat(type="ballistic", text=text, severity=severity),
+            forecast=self.is_forecast(text, severity),
+        )
 
     def _structured(
         self, text: str, marker: str, profile: ChannelProfile,

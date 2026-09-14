@@ -100,7 +100,8 @@ class AppContext:
             if threat.type not in self.config.push_types:
                 logger.debug("%s: %s not in PUSH_TYPES — %s", source, threat.type, short)
                 return
-            self.sky.mark_ballistic(ts)
+            if not evaluation.forecast:
+                self.sky.mark_ballistic(ts)
             threat = replace(threat, severity=self.danger.siren_severity(
                 text, threat.severity, profile))
             if threat.severity == "warning" and not self.config.push_warnings:
@@ -127,7 +128,11 @@ class AppContext:
         if threat.severity == "warning" and profile.trim_warning_push:
             threat = replace(threat, text=first_sentence(threat.text))
 
-        label = f"{threat.severity}/{threat.type}{' (context)' if bare else ''}"
+        label = f"{threat.severity}/{threat.type}"
+        if bare:
+            label += " (context)"
+        elif evaluation.forecast:
+            label += " (forecast)"
 
         async def record(pushed: bool) -> None:
             await self.db.insert_push(
