@@ -344,7 +344,7 @@ async def test_m0nitoring_sirens_only_once_kyiv_is_named():
 
 
 async def test_a_kyiv_district_counts_as_naming_kyiv():
-    for text in ("Є ціль, центр!", "Циркон на Троєщину", "Балістика на Оболонь"):
+    for text in ("Спуск на Позняки", "Циркон на Троєщину", "Балістика на Оболонь"):
         ctx = make_ctx()
         await ctx.handle_message(MONIT, text, T0)
         assert ctx.db.pushes[0][2] == "inbound", text
@@ -508,13 +508,35 @@ async def test_live_s400_firing_on_war_monitor_still_alerts():
     assert ctx.push.sent == ["По Київщині відпрацювання С-400 з Брянщини."]
 
 
-async def test_a_bare_target_on_m0nitoring_is_ballistic():
-    ctx = make_ctx()
-    await ctx.handle_message(MONIT, "Є ціль, центр!", T0)
-    assert ctx.push.sent == ["Є ціль, центр!"]
-    assert ctx.db.pushes == [
-        (MONIT, "ballistic", "inbound", "Є ціль, центр!", True),
-    ]
+TRACKED_TARGETS_ON_MONIT0RING = (
+    "Є ціль, центр!",
+    "Лишається остання ціль, на Оболонь/Трою.",
+    "Збиття цілі.",
+    "Мимо дали. Назад ціль вилізла на Видубичі.",
+    "Ціль втрачено над Русанівкою.",
+    "Перша ціль наближається, йдуть парами по 2.",
+)
+
+
+async def test_a_bare_target_on_m0nitoring_needs_a_ballistic_window():
+    for text in TRACKED_TARGETS_ON_MONIT0RING:
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(MONIT, "Герань-5 в бік Київщини.", T0)
+        await ctx.handle_message(MONIT, text, T0 + timedelta(minutes=2))
+        assert ctx.push.sent == [], text
+        assert ctx.db.pushes == [], text
+
+
+async def test_a_bare_target_on_m0nitoring_rides_a_ballistic_window():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(MONIT, "Загроза балістики з Брянська.", T0)
+    ctx.push.sent.clear()
+    await ctx.handle_message(MONIT, "Ще ціль на Бориспіль.",
+                             T0 + timedelta(minutes=2))
+    assert ctx.push.sent == ["Ще ціль на Бориспіль."]
+    assert ctx.db.pushes[-1] == (
+        MONIT, "ballistic", "inbound", "Ще ціль на Бориспіль.", True,
+    )
 
 
 NOT_A_TARGET_ON_MONIT0RING = (
@@ -658,8 +680,7 @@ ABSENT_THREAT = (
 async def test_an_absent_threat_is_an_all_clear_not_a_warning():
     for text in ABSENT_THREAT:
         ctx = make_ctx(push_warnings=True)
-        await ctx.handle_message(
-            MONIT, "Перша ціль наближається, йдуть парами по 2.", T0)
+        await ctx.handle_message(MONIT, "Загроза балістики з Курська.", T0)
         await ctx.handle_message(MONIT, text, T0 + timedelta(minutes=21))
         assert ctx.push.cleared == [text], text
         assert [p[2] for p in ctx.db.pushes] == ["warning", "clear"], text
@@ -667,13 +688,12 @@ async def test_an_absent_threat_is_an_all_clear_not_a_warning():
 
 async def test_an_absent_threat_does_not_arm_the_bare_window():
     ctx = make_ctx(push_warnings=True)
-    await ctx.handle_message(
-        MONIT, "Перша ціль наближається, йдуть парами по 2.", T0)
+    await ctx.handle_message(MONIT, "Загроза балістики з Курська.", T0)
     await ctx.handle_message(MONIT, ABSENT_THREAT[0], T0 + timedelta(minutes=21))
     await ctx.handle_message(
         NEBO, "З Черкащини ще 2 летять, ймовірно через них досі тримають тривогу",
         T0 + timedelta(minutes=32))
-    assert ctx.push.sent == ["Перша ціль наближається, йдуть парами по 2."]
+    assert ctx.push.sent == ["Загроза балістики з Курська."]
 
 
 async def test_nothing_observed_is_not_a_target():
@@ -737,5 +757,5 @@ async def test_declined_suburb_names_count_as_kyiv():
 
 async def test_a_river_bank_places_a_bare_target_but_does_not_lift_the_siren_demote():
     ctx = make_ctx(push_warnings=True)
-    await ctx.handle_message(MONIT, "Увага весь правий берег, кількісна ціль!", T0)
+    await ctx.handle_message(MONIT, "КН-23 падають на правий берег!", T0)
     assert ctx.db.pushes[0][2] == "warning"

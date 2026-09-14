@@ -72,7 +72,6 @@ PROFILES = {
     ),
     "kyiv_m0nitoring": ChannelProfile(
         name="kyiv_m0nitoring",
-        target_is_ballistic=True,
         siren_needs_kyiv=True,
         extra_veto=KYIV_MONIT_VETO,
     ),
