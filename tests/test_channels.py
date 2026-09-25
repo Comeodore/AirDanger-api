@@ -5,6 +5,8 @@ from test_pipeline import T0, make_ctx
 
 NEBO = "kyiv_nebo"
 WAR = "war_monitor"
+KPSZSU = "kpszsu"
+ROCKETS = "rocketskyiv"
 
 
 async def test_the_fastest_channel_wins_and_the_rest_are_one_stream():
@@ -253,12 +255,34 @@ async def test_zircons_toward_kyiv_from_a_launch_site_are_inbound():
         "❗️ 2х КР Циркон з Міллерово у напрямку Київщини.",
         "❗️ 2х Циркони у напрямку Київщини з Курьска",
         "❗️ Попередньо КР Циркон з Курщини у напрямку Києва.",
-        "❗️ Вихід Циркону з Курьска",
-        "❗️ вихід ймовірно КР Циркон з Курщини",
     ):
         ctx = make_ctx()
         await ctx.handle_message(WAR, text, T0)
         assert ctx.push.sent == [text], text
+
+
+async def test_a_war_monitor_launch_without_kyiv_is_a_warning():
+    for text in (
+        "❗️ Вихід Циркону з Курьска",
+        "❗️ вихід ймовірно КР Циркон з Курщини",
+        "☄ Вихід балістики Брянськ",
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(WAR, text, T0)
+        assert [p[2] for p in ctx.db.pushes] == ["warning"], text
+
+
+async def test_a_kyiv_mention_after_a_quiet_launch_goes_out_loud():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(WAR, "☄ Вихід балістики Брянськ", T0)
+    await ctx.handle_message(KPSZSU, "Ракета на Київ!", T0 + timedelta(seconds=20))
+    assert [p[2] for p in ctx.db.pushes] == ["warning", "inbound"]
+
+
+async def test_a_rocketskyiv_launch_without_kyiv_stays_inbound():
+    ctx = make_ctx()
+    await ctx.handle_message(ROCKETS, "Вихід Цирконів з Курщини.", T0)
+    assert [p[2] for p in ctx.db.pushes] == ["inbound"]
 
 
 async def test_s400_working_kyiv_oblast_is_inbound_not_a_warning():
@@ -810,3 +834,49 @@ async def test_a_river_bank_places_a_bare_target_but_does_not_lift_the_siren_dem
     ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(MONIT, "КН-23 падають на правий берег!", T0)
     assert ctx.db.pushes[0][2] == "warning"
+
+
+async def test_kpszsu_missile_on_kyiv_is_a_launch():
+    for text in ("Ракета на Київ!", "Ракета через Київщину!", "🚀 Київ в укриття - ракета."):
+        ctx = make_ctx()
+        await ctx.handle_message(KPSZSU, text, T0)
+        assert ctx.push.sent == [text], text
+
+
+async def test_kpszsu_missiles_on_a_cruise_route_stay_silent():
+    for text in (
+        "🚀Ракети повз Бориспіль на Київ.",
+        "🚀Ракети в р-ні. Баришівки західним курсом на Київ.",
+        "🚀Ракета пройшла через Київщину у напрямку Житомира.",
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(KPSZSU, text, T0)
+        assert ctx.push.sent == [], text
+
+
+async def test_kpszsu_missile_is_dropped_while_cruise_leads():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        WAR, "❗️ 1 група КР Калібр повз Богуслав заходить на Обухівський район Київщини", T0)
+    await ctx.handle_message(KPSZSU, "Ракета на Київ!", T0 + timedelta(seconds=20))
+    assert ctx.push.sent == []
+
+
+async def test_cruise_missiles_never_push():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(ROCKETS, "Увага! Йдуть Іскандери крилаті схоже. До 5 штук!", T0)
+    await ctx.handle_message(ROCKETS, "Бровари, Київ, Бориспіль - увага по КР.",
+                             T0 + timedelta(seconds=130))
+    assert ctx.push.sent == []
+
+
+async def test_launches_aimed_away_from_kyiv_stay_silent():
+    for source, text in (
+        (KPSZSU, "🚀Швидкісна ціль у напрямку Сум з Курської області."),
+        (WAR, "☄ Вихід балістики з Бєлгорода"),
+        (WAR, "☄ціль на Охтирку з Бєлгорода"),
+        (KPSZSU, "Цілі на Київщині на/повз Бородянку південно-західним курсом."),
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(source, text, T0)
+        assert ctx.push.sent == [], text
