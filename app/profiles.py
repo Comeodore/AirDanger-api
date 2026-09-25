@@ -75,6 +75,12 @@ PROFILES = {
         siren_needs_kyiv=True,
         extra_veto=KYIV_MONIT_VETO,
     ),
+    "kpszsu": ChannelProfile(
+        name="kpszsu",
+        require_kyiv=True,
+        allow_bare_target=False,
+    ),
+    "rocketskyiv": ChannelProfile(name="rocketskyiv"),
 }
 
 DEFAULT_PROFILE = ChannelProfile(name="default")
