@@ -99,7 +99,8 @@ ELSEWHERE_PLACES = [
     r"херсон\w*", r"херсонщин\w*",
     r"запоріж\w*", r"запорізьк\w*",
     r"полтав\w*", r"полтавщин\w*", r"кременчу\w*", r"лубн\w*",
-    r"сум[иі]\b", r"сумщин\w*", r"конотоп\w*", r"шостк\w*",
+    r"сум(?:и|і)?\b", r"сумщин\w*", r"конотоп\w*", r"шостк\w*",
+    r"охтирк\w*", r"тростян\w*",
     r"чернігів\w*", r"чернігов\w*", r"чернігівщин\w*", r"ніжин\w*",
     r"черкас\w*", r"черкащин\w*", r"сміл\w*", r"кан(ів|ев)\w*",
     r"вінниц\w*", r"вінниччин\w*",
@@ -125,13 +126,13 @@ TOWARD = r"(?:\bна|\bдо|\bпо|\bв\s+бік|\bу\s+бік|\bу\s+напря
 KYIV_AXIS_SITES = [
     r"\bбрянс[ьк]\w*", r"\bбрянщин\w*",
     r"\bкурс[ьк]\w*", r"\bкурьск\w*", r"\bкурщин\w*",
-    r"\b(бє|бі|бе)лгород\w*", r"\b(бє|бі|бе)лгородщин\w*",
     r"\bворонеж\w*", r"\bорл(а|і|ом)\b", r"\bшаталов\w*", r"\bсєщ\w*",
     r"\bкапустин\w*",
 ]
 
 OTHER_SITES = [
     r"\bкрим\w*", r"\bтаганро[гз]\w*", r"\bростов\w*", r"\bміллеров\w*",
+    r"\b(бє|бі|бе)лгород\w*",
     r"\bазовськ\w*", r"\bчорн(ого|е)\s+мор\w*", r"\bачм\b", r"\bакватор\w*",
     r"\bкраснодар\w*", r"\bставропол\w*", r"\bмосковськ\w*",
     r"\bсанкт-петербур\w*", r"\bневинномиськ\w*",
@@ -147,6 +148,9 @@ _KYIV = _compile(KYIV)
 _KYIV_FAR = _compile(KYIV_OBLAST_FAR)
 _ELSEWHERE_BARE = _compile([rf"\b{p}" for p in ELSEWHERE_PLACES])
 _ELSEWHERE_AIMED = _compile([rf"{TOWARD}{p}" for p in ELSEWHERE_PLACES])
+_ELSEWHERE_HEADING = _compile(
+    [rf"(?:\b(?:у|в)\s+напрямку|\bкурс(?:ом)?\s+на|\bдалі(?:\s+на)?)\s+{p}" for p in ELSEWHERE_PLACES]
+)
 _KYIV_AXIS_SITES = _compile(KYIV_AXIS_SITES)
 _OTHER_SITES = _compile(OTHER_SITES)
 
@@ -169,6 +173,10 @@ def other_site(text: str) -> bool:
 
 def aimed_elsewhere(text: str) -> bool:
     return _any(_ELSEWHERE_AIMED, text) and not mentions_kyiv(text)
+
+
+def heads_elsewhere(text: str) -> bool:
+    return _any(_ELSEWHERE_HEADING, text)
 
 
 def elsewhere_target(text: str) -> bool:

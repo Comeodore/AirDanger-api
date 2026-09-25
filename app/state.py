@@ -17,6 +17,7 @@ class SkyContext:
     ttl: timedelta
     _ballistic_at: datetime | None = None
     _other_at: datetime | None = None
+    _cruise_at: datetime | None = None
 
     def mark_ballistic(self, ts: datetime) -> None:
         self._ballistic_at = ts
@@ -24,9 +25,13 @@ class SkyContext:
     def mark_other(self, ts: datetime) -> None:
         self._other_at = ts
 
+    def mark_cruise(self, ts: datetime) -> None:
+        self._cruise_at = ts
+
     def clear(self) -> None:
         self._ballistic_at = None
         self._other_at = None
+        self._cruise_at = None
 
     def _live(self, at: datetime | None, ts: datetime) -> bool:
         return at is not None and ts - at <= self.ttl
@@ -36,6 +41,13 @@ class SkyContext:
 
     def other_live(self, ts: datetime) -> bool:
         return self._live(self._other_at, ts)
+
+    def cruise_leads(self, ts: datetime) -> bool:
+        if not self._live(self._cruise_at, ts):
+            return False
+        if not self.ballistic_live(ts):
+            return True
+        return self._cruise_at > self._ballistic_at
 
     def ballistic_leads(self, ts: datetime) -> bool:
         if not self.ballistic_live(ts):

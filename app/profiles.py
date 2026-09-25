@@ -19,6 +19,7 @@ class ChannelProfile:
     require_kyiv: bool = False
     allow_bare_target: bool = True
     target_is_ballistic: bool = False
+    missile_is_ballistic: bool = False
     siren_needs_kyiv: bool = False
     trim_warning_push: bool = False
     extra_veto: tuple[str, ...] = field(default_factory=tuple)
@@ -79,6 +80,7 @@ PROFILES = {
         name="kpszsu",
         require_kyiv=True,
         allow_bare_target=False,
+        missile_is_ballistic=True,
     ),
     "rocketskyiv": ChannelProfile(name="rocketskyiv"),
 }

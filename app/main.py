@@ -93,12 +93,19 @@ class AppContext:
         if evaluation.other_weapon:
             logger.debug("%s: other weapon marks context — %s", source, short)
             self.sky.mark_other(ts)
+        if self.danger.is_cruise(text):
+            logger.debug("%s: cruise marks context — %s", source, short)
+            self.sky.mark_cruise(ts)
 
         threat = evaluation.detection
         bare = False
         if threat is not None:
             if threat.type not in self.config.push_types:
                 logger.debug("%s: %s not in PUSH_TYPES — %s", source, threat.type, short)
+                return
+            if evaluation.guessed and self.sky.cruise_leads(ts):
+                logger.info("%s: bare missile dropped, cruise in the air — %s",
+                            source, short)
                 return
             if not evaluation.forecast:
                 self.sky.mark_ballistic(ts)

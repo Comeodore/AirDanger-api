@@ -40,6 +40,46 @@ TARGET_WORDS = [
 ]
 
 
+MISSILE_ON_KYIV = [
+    r"\bракет\w*[^\n]{0,60}\b(?:на|до|(?:у|в)\s+напрямку|курс(?:ом)?\s+на|через)\s+(?:київ(?!щині)|києв|столиц)\w*",
+    r"^\W*київ\w*\s*[-–—]?\s*(?:в\s+укриття\s*[-–—]?\s*)?ракет\w*",
+]
+
+
+CRUISE_ROUTE = [
+    r"\bгруп\w*",
+    r"\bповз\b",
+    r"\bр-н\w*",
+    r"\bрайон\w*",
+    r"\bоколиц\w*",
+    r"\bзмінил\w*",
+    r"\bпройш\w*",
+    r"\bчеркащин\w*",
+    r"\bполтавщин\w*",
+    r"\bкременчу\w*",
+    r"\bкурс\s+(?:північ|півден|захід|західн|схід|східн)\w*",
+    r"\b(?:північн|південн|західн|східн)\w*\s+курс\w*",
+]
+
+
+CRUISE_WORDS = [
+    r"\bкрилат\w*",
+    r"\bкр\b",
+    r"\bкалібр\w*",
+    r"\bх-?101\b",
+    r"\bх-?55\w*",
+]
+
+
+CRUISE_GROUP = [
+    r"\bгруп\w*\s+(?:\w+\s+){0,2}ракет\w*",
+    r"\bракет\w*[^\n]{0,30}\bзмінил\w*",
+]
+
+
+FAST_WORDS = [w for w in BALLISTIC_WORDS if "іскандер" not in w]
+
+
 RECON_WORDS = [
     r"\bманевру\w+",
     r"\bрозвіду\w+",
@@ -73,8 +113,8 @@ OUR_SKY = [
 
 
 TARGET_ON_KYIV = [
-    r"\bціл\w*\b[^\n]{0,24}\b(?:на|(?:в|у)\s+бік)\s+(?:київ|києв|нас|столиц)\w*",
-    r"\bна\s+київ\w*[^\n]{0,24}\bціл\w*",
+    r"\bціл\w*\b[^\n]{0,24}\b(?:на|(?:в|у)\s+бік)\s+(?:київ(?!щин)|києв|нас|столиц)\w*",
+    r"\bна\s+київ(?!щин)\w*[^\n]{0,24}\bціл\w*",
 ]
 
 
@@ -172,6 +212,10 @@ BACKEND_VETO = [
     r"\bпідвезли\b",
     r"\bв готовності\b",
     r"\bготу(є|ють)\b",
+    r"\bминулого\s+разу\b",
+    r"\bкількіст\w*\s+(?:\w+\s+){0,2}ракет\w*",
+    r"\bвипущених\s+ракет\w*",
+    r"\bзміг\w*\s+(?:\w+\s+){0,2}попередит\w*",
 ]
 
 
@@ -227,6 +271,7 @@ INBOUND_MARKERS = [
     r"\bу наш бік\b",
     r"\bнад (київ|нами)\w*",
     r"\b(?:у|в)\s+напрямку\s+(?:київ|києв|столиц)\w*",
+    r"\bвектор\w*\s+(?:на\s+)?(?:київ|києв|столиц)\w*",
     r"\bспуск(?:и)?\b",
     r"\bшвидкісн\w+",
     r"\bзаходить\b",
@@ -285,6 +330,7 @@ class Evaluation:
     bare_target: bool = False
     all_clear: bool = False
     forecast: bool = False
+    guessed: bool = False
 
 class DangerService:
     def __init__(self) -> None:
@@ -300,6 +346,11 @@ class DangerService:
         self._irbm = matcher.compile_patterns(IRBM_DANGER)
         self._ballistic = matcher.compile_patterns(BALLISTIC_WORDS)
         self._target = matcher.compile_patterns(TARGET_ON_KYIV)
+        self._missile_on_kyiv = matcher.compile_patterns(MISSILE_ON_KYIV)
+        self._cruise_words = matcher.compile_patterns(CRUISE_WORDS)
+        self._cruise_group = matcher.compile_patterns(CRUISE_GROUP)
+        self._fast = matcher.compile_patterns(FAST_WORDS)
+        self._cruise_route = matcher.compile_patterns(CRUISE_ROUTE)
         self._our_sky = matcher.compile_patterns(OUR_SKY)
         self._target_words = matcher.compile_patterns(TARGET_WORDS)
         self._recon = matcher.compile_patterns(RECON_WORDS)
@@ -350,6 +401,16 @@ class DangerService:
         ):
             return "inbound"
         return "warning"
+
+    def is_cruise(self, text: str) -> bool:
+        if self._matcher.match_first(self._fast, text):
+            return False
+        if not (
+            self._matcher.match_first(self._cruise_words, text)
+            or self._matcher.match_first(self._cruise_group, text)
+        ):
+            return False
+        return not geo.elsewhere_target(text)
 
     def aimed_elsewhere(self, text: str) -> bool:
         return geo.aimed_elsewhere(text)
@@ -452,12 +513,28 @@ class DangerService:
         elif geo.aimed_elsewhere(text):
             return Evaluation()
 
+        if self._matcher.match_first(
+            self._cruise_words, text
+        ) and not self._matcher.match_first(self._fast, text):
+            return Evaluation(other_weapon=not geo.elsewhere_target(text))
         if self._matcher.match_first(self._ballistic, text):
             return self._ballistic_hit(text, self.severity(text))
         if self._matcher.match_first(self._drone_words, text):
             return Evaluation(other_weapon=not geo.elsewhere_target(text))
         if self._matcher.match_first(self._other_weapons, text):
             return Evaluation(other_weapon=not geo.elsewhere_target(text))
+        if (
+            profile.missile_is_ballistic
+            and self._matcher.match_first(self._missile_on_kyiv, text)
+            and not self._matcher.match_first(self._cruise_route, text)
+            and not geo.heads_elsewhere(text)
+        ):
+            severity = self.severity(text)
+            return Evaluation(
+                detection=DetectedThreat(type="ballistic", text=text, severity=severity),
+                forecast=self.is_forecast(text, severity),
+                guessed=True,
+            )
         if self._matcher.match_first(self._target, text):
             return self._ballistic_hit(text, "inbound")
         if profile.allow_bare_target and self._matcher.match_first(
