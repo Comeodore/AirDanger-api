@@ -880,3 +880,14 @@ async def test_launches_aimed_away_from_kyiv_stay_silent():
         ctx = make_ctx(push_warnings=True)
         await ctx.handle_message(source, text, T0)
         assert ctx.push.sent == [], text
+
+
+async def test_a_running_tally_of_the_salvo_is_not_a_launch():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        WAR, "По Києву запустили на цю хвилину 10 Цирконів / Онікс-М та 6 Іскандер / С-400", T0)
+    assert ctx.push.sent == []
+    assert ctx.db.pushes == []
+    await ctx.handle_message(WAR, "Ще Онікс / Циркон у напрямку Обухів",
+                             T0 + timedelta(seconds=10))
+    assert ctx.push.sent == ["Ще Онікс / Циркон у напрямку Обухів"]
