@@ -883,11 +883,29 @@ async def test_launches_aimed_away_from_kyiv_stay_silent():
 
 
 async def test_a_running_tally_of_the_salvo_is_not_a_launch():
+    for text in (
+        "По Києву запустили на цю хвилину 10 Цирконів / Онікс-М та 6 Іскандер / С-400",
+        "За сьогодні по Києву 8 балістичних ракет",
+        "За цю ніч на Київ 12 Цирконів та 4 Іскандери",
+        "За добу по Київщині 6 балістик",
+        "Підсумок: по Києву 10 Цирконів",
+        "З початку атаки на Київ вже 14 балістичних",
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(WAR, text, T0)
+        assert ctx.push.sent == [], text
+        assert ctx.db.pushes == [], text
     ctx = make_ctx(push_warnings=True)
     await ctx.handle_message(
         WAR, "По Києву запустили на цю хвилину 10 Цирконів / Онікс-М та 6 Іскандер / С-400", T0)
-    assert ctx.push.sent == []
-    assert ctx.db.pushes == []
     await ctx.handle_message(WAR, "Ще Онікс / Циркон у напрямку Обухів",
                              T0 + timedelta(seconds=10))
     assert ctx.push.sent == ["Ще Онікс / Циркон у напрямку Обухів"]
+
+
+async def test_a_forecast_for_tonight_is_still_a_warning():
+    ctx = make_ctx(push_warnings=True)
+    text = "На цю ніч також діє підвищена загроза по балістиці та Цирконах"
+    await ctx.handle_message(NEBO, text, T0)
+    assert ctx.push.sent == [text]
+    assert ctx.db.pushes[0][2] == "warning"
