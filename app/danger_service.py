@@ -504,7 +504,9 @@ class DangerService:
             return Evaluation(detection=DetectedThreat(
                 type="irbm", text=text, severity=self.severity(text),
             ))
-        if len(text) > MAX_LEN or self._matcher.match_first(self._ignore, text):
+        if self._matcher.match_first(self._ignore, text):
+            return Evaluation()
+        if len(text) > MAX_LEN and marker not in STRUCTURED_WARNING_MARKERS:
             return Evaluation()
 
         if marker is not None:

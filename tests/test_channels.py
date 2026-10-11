@@ -93,6 +93,37 @@ async def test_war_monitor_warning_push_is_cut_to_the_first_sentence():
     assert ctx.push.sent == ["🟣 Загроза балістики з Криму"]
 
 
+WAR_PURPLE_FULL = (
+    "🟣 Загроза балістики з Брянська. Увага.\n \n"
+    "Імовірний пуск балістичних ракет комплексів «Іскандер» / С-400.\n"
+    "або робота ворожої ППО С-300.\n\n"
+    "Не знаходьтесь під відкритим небом — це небезпечно!"
+)
+WAR_MIG_TAKEOFF = (
+    "🛫 Зліт МіГ-31К ВПС рф.\n\n"
+    "МіГ-31К — носій гіперзвукової аеробалістичної ракети Х-47м2 комплексу "
+    "\"Кинджал\", яка становить загрозу для всіх регіонів країни.\n\n@war_monitor"
+)
+
+
+async def test_war_monitor_full_warning_templates_pass_the_length_cap():
+    for text, pushed in (
+        (WAR_PURPLE_FULL, "🟣 Загроза балістики з Брянська"),
+        (WAR_MIG_TAKEOFF, "🛫 Зліт МіГ-31К ВПС рф"),
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(WAR, text, T0)
+        assert ctx.push.sent == [pushed], text
+        assert ctx.db.pushes == [(WAR, "ballistic", "warning", text, True)], text
+
+
+async def test_war_monitor_long_launch_posts_are_still_capped():
+    ctx = make_ctx()
+    text = "‼️ Київ — спуск балістики! " + "Деталі згодом. " * 12
+    await ctx.handle_message(WAR, text, T0)
+    assert ctx.push.sent == []
+
+
 async def test_war_monitor_drones_and_aftermath_never_push():
     ctx = make_ctx()
     for text in (
