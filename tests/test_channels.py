@@ -934,6 +934,26 @@ async def test_a_running_tally_of_the_salvo_is_not_a_launch():
     assert ctx.push.sent == ["Ще Онікс / Циркон у напрямку Обухів"]
 
 
+async def test_talk_of_the_remaining_stock_is_not_a_launch():
+    for source, text in (
+        (ROCKETS, "Ворог вистрілив всі Циркони з попередження, лишається лише "
+                  "орієнтовно 12 Іскандерів у запасі в Брянську."),
+        (ROCKETS, "Ворог вистрілив всі Циркони, лишається 12 Іскандерів у Брянську."),
+        (ROCKETS, "Весь запас балістики відстріляли."),
+        (NEBO, "2-4 Цирконів. 6 С-400.  Іскандери в запасі тримають."),
+        (NEBO, "По нашому регіону кинули близько 10 балістичних ракет, "
+               "ви самі розумієте - це не весь запас."),
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(source, text, T0)
+        assert ctx.push.sent == [], text
+        assert ctx.db.pushes == [], text
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(ROCKETS, "Пішли Іскандери з Брянска !!!", T0)
+    await ctx.handle_message(ROCKETS, "спуск 2-4 ракет!", T0 + timedelta(seconds=111))
+    assert ctx.push.sent == ["Пішли Іскандери з Брянска !!!", "спуск 2-4 ракет!"]
+
+
 async def test_a_forecast_for_tonight_is_still_a_warning():
     ctx = make_ctx(push_warnings=True)
     text = "На цю ніч також діє підвищена загроза по балістиці та Цирконах"
