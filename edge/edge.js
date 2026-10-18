@@ -33,6 +33,9 @@ const OUTAGE_WARN_MS = 30 * 1000;
 const OUTAGE_ERROR_MS = 180 * 1000;
 const OUTAGE_REMIND_MS = 600 * 1000;
 const BLIND_WARN_MS = 60 * 1000;
+const PULL_STALE_MS = 60 * 1000;
+const MTPROTO_GRACE_MS = 120 * 1000;
+const NOT_CONFIGURED = "not configured";
 const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
 const POST = /data-post="[^"/]+\/(\d+)"/g;
 const TIME = /<time datetime="([^"]+)"/;
@@ -187,7 +190,7 @@ export class Poller extends DurableObject {
     this.firsts = { tme: 0, pull: 0, update: 0 };
     this.mt = {
       client: null, starting: null, me: null, disabled: null,
-      nextStartAt: Date.now() + MTPROTO_STARTUP_DELAY_MS,
+      nextStartAt: Date.now() + MTPROTO_STARTUP_DELAY_MS, bootAt: Date.now(), everOk: false, pulls: {}, signedInAt: null,
       timer: null, pulling: false, lastPullOk: null, failingSince: null, reportedAt: 0, updates: 0,
     };
     this.prunedAt = 0;
@@ -350,7 +353,7 @@ export class Poller extends DurableObject {
     const mt = this.mt;
     if (mt.client || mt.starting || mt.disabled || Date.now() < mt.nextStartAt) return;
     if (!this.env.TG_SESSION || !this.env.TG_API_ID || !this.env.TG_API_HASH) {
-      mt.disabled = "not configured";
+      mt.disabled = NOT_CONFIGURED;
       console.warn("mtproto not configured — polling t.me/s only");
       return;
     }
@@ -377,6 +380,7 @@ export class Poller extends DurableObject {
       const me = await client.start({ session: convertFromTelethonSession(this.env.TG_SESSION) });
       mt.client = client;
       mt.me = me.username;
+      mt.signedInAt = Date.now();
       console.log(`mtproto signed in as @${me.username}, pull every ${PULL_MS / 1000}s plus updates`);
       mt.timer = setInterval(() => this.pullAll(), PULL_MS);
       await this.pullAll();
@@ -422,6 +426,7 @@ export class Poller extends DurableObject {
         return;
       }
       this.notePull(failed ? failed.reason : null);
+      this.notePulls(batches);
       for (let i = 0; i < CHANNELS.length; i++) {
         if (batches[i].status !== "fulfilled") continue;
         try {
@@ -433,6 +438,21 @@ export class Poller extends DurableObject {
     } finally {
       mt.pulling = false;
     }
+  }
+
+  notePulls(batches) {
+    const mt = this.mt;
+    const now = Date.now();
+    CHANNELS.forEach((channel, i) => {
+      const pull = (mt.pulls[channel] ??= { lastOk: null, error: null });
+      if (batches[i].status === "fulfilled") {
+        pull.lastOk = now;
+        pull.error = null;
+        mt.everOk = true;
+      } else {
+        pull.error = String(batches[i].reason);
+      }
+    });
   }
 
   notePull(error) {
@@ -695,6 +715,9 @@ export class Poller extends DurableObject {
         await this.ctx.storage.put({ reports: this.reports, deadTokens: this.deadTokens });
         if (this.verbose) console.log(`home report: ${result.stored} stored, ${result.removed} removed`);
       }
+      if (wantDevices) {
+        await this.homeFetch("/edge/health", { method: "POST", body: JSON.stringify(this.sourceHealth()) });
+      }
       if (this.home.okAt === null || this.home.failReportedAt) {
         if (this.home.failReportedAt) console.log("home API reachable again");
         this.home.failReportedAt = 0;
@@ -709,6 +732,41 @@ export class Poller extends DurableObject {
         );
       }
     }
+  }
+
+  tmeState(channel, now) {
+    const s = this.channels[channel];
+    if (!s) return "starting";
+    if (s.warnedNoPreview) return "no_preview";
+    if (s.blindSince !== null && now - s.blindSince >= BLIND_WARN_MS) return "blind";
+    if (s.failures && now - s.failingSince >= OUTAGE_WARN_MS) return "unreachable";
+    return s.lastOk === null ? "starting" : "ok";
+  }
+
+  mtprotoState(now) {
+    const mt = this.mt;
+    if (mt.disabled) return mt.disabled === NOT_CONFIGURED ? "off" : "rejected";
+    const fresh = (at) => at !== null && now - at < PULL_STALE_MS;
+    const pulled = fresh(mt.signedInAt) || Object.values(mt.pulls).some((p) => fresh(p.lastOk));
+    if (mt.client && pulled) return "ok";
+    if (!mt.everOk && now - mt.bootAt < MTPROTO_STARTUP_DELAY_MS + MTPROTO_GRACE_MS) return "starting";
+    return "down";
+  }
+
+  pullState(channel, overall, now) {
+    if (overall !== "ok") return overall;
+    const pull = this.mt.pulls[channel];
+    const since = pull && pull.lastOk !== null ? pull.lastOk : this.mt.signedInAt;
+    return since !== null && now - since < PULL_STALE_MS ? "ok" : "failing";
+  }
+
+  sourceHealth() {
+    const now = Date.now();
+    const mtproto = this.mtprotoState(now);
+    const channels = Object.fromEntries(CHANNELS.map((channel) => [
+      channel, { tme: this.tmeState(channel, now), mtproto: this.pullState(channel, mtproto, now) },
+    ]));
+    return { mtproto, channels };
   }
 
   async page(channel) {
@@ -836,6 +894,7 @@ export class Poller extends DurableObject {
         failing_since: this.mt.failingSince,
         updates: this.mt.updates,
       },
+      sources: this.sourceHealth(),
       first_seen_by: this.firsts,
       last_tick: this.lastTick,
       alarm: await this.ctx.storage.getAlarm(),

@@ -162,7 +162,33 @@ async def edge_report(body: EdgeReport, request: Request) -> dict:
     return {"stored": stored, "removed": len(body.dead_tokens)}
 
 
+SOURCE_STATE = Field(max_length=16, pattern=r"^[a-z_]+$")
+
+
+class EdgeChannelHealth(BaseModel):
+    tme: str = SOURCE_STATE
+    mtproto: str = SOURCE_STATE
+
+
+class EdgeHealth(BaseModel):
+    mtproto: str = SOURCE_STATE
+    channels: dict[Annotated[str, Field(max_length=64)], EdgeChannelHealth] = Field(
+        default_factory=dict, max_length=20,
+    )
+
+
+@router.post("/edge/health", dependencies=[Depends(check_edge_key)])
+async def edge_health(body: EdgeHealth, request: Request) -> dict:
+    ctx = _ctx(request)
+    now = time.time()
+    ctx.edge_seen_at = now
+    ctx.edge_health = body.model_dump()
+    ctx.edge_health_at = now
+    return {"ok": True}
+
+
 EDGE_SILENT_SEC = 300
+GOOD_STATES = {"ok", "starting", "waiting"}
 
 
 def edge_state(ctx, now: float) -> tuple[str, int | None]:
@@ -173,6 +199,26 @@ def edge_state(ctx, now: float) -> tuple[str, int | None]:
     if now - ctx.started_at <= EDGE_SILENT_SEC:
         return "waiting", None
     return "silent", None
+
+
+def edge_sources(ctx, now: float) -> tuple[str, str, dict]:
+    report = ctx.edge_health
+    if report is None or now - ctx.edge_health_at > EDGE_SILENT_SEC:
+        waiting = report is None and now - ctx.started_at <= EDGE_SILENT_SEC
+        state = "waiting" if waiting else "unknown"
+        return state, state, {}
+    channels = report["channels"]
+    tme_states = [c["tme"] for c in channels.values()]
+    if all(state == "ok" for state in tme_states):
+        tme = "ok"
+    elif all(state in ("ok", "starting") for state in tme_states):
+        tme = "starting"
+    else:
+        tme = "down"
+    mtproto = report["mtproto"]
+    if mtproto == "ok" and any(c["mtproto"] != "ok" for c in channels.values()):
+        mtproto = "failing"
+    return mtproto, tme, channels
 
 
 @router.get("/health")
@@ -198,15 +244,20 @@ async def health(request: Request) -> dict:
         mtproto = "ok" if ctx.mtproto.connected else "down"
         if mtproto != "ok":
             degraded = True
+    tme_ok = connected and all(c["state"] == "ok" for c in channels.values())
+    tme = "ok" if ingest_on and tme_ok else "down"
     edge, edge_ago = edge_state(ctx, now)
-    if not ingest_on and edge == "silent":
-        degraded = True
+    if not ingest_on:
+        mtproto, tme, channels = edge_sources(ctx, now)
+        if edge == "silent" or mtproto not in GOOD_STATES or tme not in GOOD_STATES:
+            degraded = True
     return {
         "status": "degraded" if degraded else "ok",
-        "connected": connected,
-        "ingest": "on" if ingest_on else "off",
         "mtproto": mtproto,
+        "tme": tme,
         "edge": edge,
         "edge_last_seen_sec": edge_ago,
+        "ingest": "on" if ingest_on else "off",
+        "connected": connected,
         "channels": channels,
     }

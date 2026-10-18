@@ -93,6 +93,8 @@ class AppContext:
     episode: Episode | None = None
     mtproto: MtprotoSource | None = None
     edge_seen_at: float | None = None
+    edge_health: dict | None = None
+    edge_health_at: float | None = None
     started_at: float = field(default_factory=time.time)
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:

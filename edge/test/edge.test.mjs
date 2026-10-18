@@ -94,7 +94,7 @@ function page(channel, posts) {
 }
 
 function network({ pages = {}, apns = {}, home = { up: true, devices: [] } } = {}) {
-  const net = { pages, apns, home, tme: [], pushes: [], reports: [], deviceFetches: 0 };
+  const net = { pages, apns, home, tme: [], pushes: [], reports: [], health: [], deviceFetches: 0 };
   globalThis.fetch = async (url, init = {}) => {
     const u = new URL(url);
     if (u.host === "t.me") {
@@ -116,6 +116,10 @@ function network({ pages = {}, apns = {}, home = { up: true, devices: [] } } = {
         return Response.json({ devices: net.home.devices });
       }
       const body = JSON.parse(init.body);
+      if (u.pathname === "/edge/health") {
+        net.health.push(body);
+        return Response.json({ ok: true });
+      }
       net.reports.push(body);
       return Response.json({ stored: body.decisions.length, removed: body.dead_tokens.length });
     }
@@ -386,4 +390,88 @@ test("every route needs the status key", async () => {
   assert.deepEqual(calls, ["status"]);
   const open = await worker.fetch(new Request("https://edge.test/status", { headers: { "x-key": "" } }), { ...env, STATUS_KEY: "" });
   assert.equal(open.status, 403);
+});
+
+function signedIn(poller, histories, signedAgo = 0) {
+  poller.mt.client = { getHistory: async (channel) => histories(channel) };
+  poller.mt.signedInAt = Date.now() - signedAgo;
+}
+
+test("the edge reports every source as ok home once a minute", async () => {
+  const { poller, net } = await baselined({ devices: [MINE] });
+  signedIn(poller, (channel) => [message(channel, 100, "old")]);
+  await poller.pullAll();
+  await poller.syncHomeNow(true, false);
+  const ok = { tme: "ok", mtproto: "ok" };
+  assert.deepEqual(net.health.at(-1), { mtproto: "ok", channels: { rocketskyiv: ok, war_monitor: ok, kpszsu: ok } });
+  assert.deepEqual((await poller.status()).sources, net.health.at(-1));
+});
+
+test("a t.me/s channel failing for 30 s is unreachable", async () => {
+  const { poller } = await baselined({ devices: [MINE] });
+  const now = Date.now();
+  poller.failure("kpszsu", "HTTP 502", now - 10 * 1000);
+  poller.failure("kpszsu", "HTTP 502", now);
+  assert.equal(poller.sourceHealth().channels.kpszsu.tme, "ok");
+  poller.channels.kpszsu.failingSince = now - 31 * 1000;
+  assert.equal(poller.sourceHealth().channels.kpszsu.tme, "unreachable");
+  poller.reachable("kpszsu", now);
+  assert.equal(poller.sourceHealth().channels.kpszsu.tme, "ok");
+});
+
+test("a page that stops parsing for a minute is blind", async () => {
+  const { poller } = await baselined({ devices: [MINE] });
+  const now = Date.now();
+  poller.blind("war_monitor", 1000, now - 61 * 1000);
+  poller.blind("war_monitor", 1000, now);
+  assert.equal(poller.sourceHealth().channels.war_monitor.tme, "blind");
+});
+
+test("a channel without a preview shows as no_preview", async () => {
+  const { poller } = await baselined({ devices: [MINE] });
+  poller.noPreview("rocketskyiv", "https://t.me/rocketskyiv", Date.now());
+  assert.equal(poller.sourceHealth().channels.rocketskyiv.tme, "no_preview");
+});
+
+test("MTProto is starting through the startup delay and down after it", async () => {
+  const { poller } = await makePoller({ devices: [MINE] });
+  assert.equal(poller.sourceHealth().mtproto, "starting");
+  assert.equal(poller.sourceHealth().channels.kpszsu.mtproto, "starting");
+  poller.mt.bootAt = Date.now() - (180 + 121) * 1000;
+  assert.equal(poller.sourceHealth().mtproto, "down");
+});
+
+test("a revoked session is rejected and missing secrets are off", async () => {
+  const { poller } = await baselined({ devices: [MINE] });
+  signedIn(poller, () => { throw new Error("Telegram API error 401: SESSION_REVOKED"); });
+  poller.mt.client.close = async () => {};
+  await poller.pullAll();
+  assert.equal(poller.sourceHealth().mtproto, "rejected");
+  const fresh = await makePoller({ devices: [MINE] });
+  fresh.poller.mt.nextStartAt = 0;
+  fresh.poller.ensureMtproto();
+  assert.equal(fresh.poller.sourceHealth().mtproto, "off");
+});
+
+test("a channel that stops pulling for a minute is failing", async () => {
+  const { poller } = await baselined({ devices: [MINE] });
+  signedIn(poller, (channel) => {
+    if (channel === "rocketskyiv") throw new Error("CHANNEL_PRIVATE");
+    return [message(channel, 100, "old")];
+  }, 10 * 1000);
+  await poller.pullAll();
+  assert.equal(poller.sourceHealth().channels.rocketskyiv.mtproto, "ok");
+  poller.mt.signedInAt = Date.now() - 61 * 1000;
+  const health = poller.sourceHealth();
+  assert.equal(health.mtproto, "ok");
+  assert.equal(health.channels.rocketskyiv.mtproto, "failing");
+  assert.equal(health.channels.kpszsu.mtproto, "ok");
+});
+
+test("MTProto that stopped pulling everywhere is down", async () => {
+  const { poller } = await baselined({ devices: [MINE] });
+  signedIn(poller, (channel) => [message(channel, 100, "old")], 120 * 1000);
+  await poller.pullAll();
+  for (const pull of Object.values(poller.mt.pulls)) pull.lastOk = Date.now() - 61 * 1000;
+  assert.equal(poller.sourceHealth().mtproto, "down");
 });

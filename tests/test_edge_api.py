@@ -167,12 +167,102 @@ async def test_health_degrades_when_the_edge_never_comes():
     assert (body["status"], body["edge"]) == ("degraded", "silent")
 
 
+def sources(mtproto="ok", tme="ok", **channels):
+    report = {ch: {"tme": tme, "mtproto": "ok" if mtproto == "ok" else mtproto}
+              for ch in ("rocketskyiv", "war_monitor", "kpszsu")}
+    for ch, states in channels.items():
+        report[ch] = states
+    return {"mtproto": mtproto, "channels": report}
+
+
+async def reported(ctx, body) -> dict:
+    async with client(make_app(ctx)) as http:
+        response = await http.post("/edge/health", headers={"x-edge-key": KEY}, json=body)
+        assert response.status_code == 200
+        return (await http.get("/health")).json()
+
+
 async def test_an_edge_visit_keeps_health_green():
     ctx = edge_only_ctx(started_ago=3600)
     async with client(make_app(ctx)) as http:
         await http.get("/edge/devices", headers={"x-edge-key": KEY})
+        await http.post("/edge/health", headers={"x-edge-key": KEY}, json=sources())
         body = (await http.get("/health")).json()
     assert (body["status"], body["edge"], body["edge_last_seen_sec"]) == ("ok", "ok", 0)
+
+
+async def test_health_shows_mtproto_and_tme_from_the_edge():
+    body = await reported(edge_only_ctx(started_ago=3600), sources())
+    assert (body["status"], body["mtproto"], body["tme"]) == ("ok", "ok", "ok")
+    assert body["channels"]["kpszsu"] == {"tme": "ok", "mtproto": "ok"}
+
+
+async def test_one_unreachable_tme_channel_degrades_health():
+    body = await reported(edge_only_ctx(started_ago=3600),
+                          sources(kpszsu={"tme": "unreachable", "mtproto": "ok"}))
+    assert (body["status"], body["mtproto"], body["tme"]) == ("degraded", "ok", "down")
+    assert body["channels"]["kpszsu"]["tme"] == "unreachable"
+
+
+async def test_changed_markup_degrades_health():
+    body = await reported(edge_only_ctx(started_ago=3600),
+                          sources(war_monitor={"tme": "blind", "mtproto": "ok"}))
+    assert (body["status"], body["tme"]) == ("degraded", "down")
+
+
+async def test_one_channel_failing_to_pull_degrades_health():
+    body = await reported(edge_only_ctx(started_ago=3600),
+                          sources(rocketskyiv={"tme": "ok", "mtproto": "failing"}))
+    assert (body["status"], body["mtproto"], body["tme"]) == ("degraded", "failing", "ok")
+
+
+async def test_a_rejected_session_degrades_health():
+    body = await reported(edge_only_ctx(started_ago=3600), sources(mtproto="rejected"))
+    assert (body["status"], body["mtproto"]) == ("degraded", "rejected")
+
+
+async def test_mtproto_down_degrades_health():
+    body = await reported(edge_only_ctx(started_ago=3600), sources(mtproto="down"))
+    assert (body["status"], body["mtproto"]) == ("degraded", "down")
+
+
+async def test_sources_still_starting_keep_health_green():
+    body = await reported(edge_only_ctx(started_ago=3600),
+                          sources(mtproto="starting", tme="starting"))
+    assert (body["status"], body["mtproto"], body["tme"]) == ("ok", "starting", "starting")
+
+
+async def test_an_edge_that_never_reports_its_sources_degrades_health():
+    ctx = edge_only_ctx(started_ago=3600)
+    async with client(make_app(ctx)) as http:
+        await http.get("/edge/devices", headers={"x-edge-key": KEY})
+        body = (await http.get("/health")).json()
+    assert (body["status"], body["edge"], body["mtproto"], body["tme"]) == (
+        "degraded", "ok", "unknown", "unknown")
+
+
+async def test_a_stale_source_report_degrades_health():
+    ctx = edge_only_ctx(started_ago=3600)
+    ctx.edge_health = sources()
+    ctx.edge_health_at = time.time() - EDGE_SILENT_SEC - 1
+    ctx.edge_seen_at = time.time()
+    body = await health_of(ctx)
+    assert (body["status"], body["mtproto"], body["tme"]) == ("degraded", "unknown", "unknown")
+
+
+async def test_sources_wait_for_the_first_report_after_a_restart():
+    body = await health_of(edge_only_ctx())
+    assert (body["status"], body["mtproto"], body["tme"]) == ("ok", "waiting", "waiting")
+
+
+async def test_a_source_report_needs_the_key_and_sane_states():
+    ctx = edge_only_ctx(started_ago=3600)
+    async with client(make_app(ctx)) as http:
+        keyless = await http.post("/edge/health", json=sources())
+        odd = await http.post("/edge/health", headers={"x-edge-key": KEY},
+                              json={"mtproto": "OK!", "channels": {}})
+    assert (keyless.status_code, odd.status_code) == (401, 422)
+    assert ctx.edge_health is None
 
 
 async def test_a_report_counts_as_a_visit():
@@ -180,6 +270,14 @@ async def test_a_report_counts_as_a_visit():
     async with client(make_app(ctx)) as http:
         await http.post("/edge/report", headers={"x-edge-key": KEY}, json={})
     assert (await health_of(ctx))["edge"] == "ok"
+
+
+async def test_home_polling_reports_its_own_tme_state():
+    ctx = edge_ctx()
+    ctx.ingest = SimpleNamespace(connected=True, last_message_at={},
+                                 channel_state=lambda channel: "ok")
+    body = await health_of(ctx)
+    assert (body["status"], body["tme"]) == ("ok", "ok")
 
 
 async def test_health_degrades_after_five_silent_minutes():
