@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,7 +10,18 @@ from aioapns.connection import APNsBaseClientProtocol, ChannelPool, H2Protocol
 
 from .config import Config
 from .danger_service import DetectedThreat
-from .timefmt import iso_kyiv
+from .payloads import (
+    ALL_CLEAR_TTL_SEC,
+    BODY_LIMIT,
+    INBOUND_TTL_SEC,
+    SILENT_SOUND,
+    SOUND_CHOICES,
+    TYPE_NAMES_UK,
+    WARNING_TTL_SEC,
+    all_clear_batch,
+    detection_batches,
+    first_sentence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,27 +55,11 @@ def install_honest_channel_pool() -> None:
     H2Protocol.__init__ = __init__
     H2Protocol._airdanger_honest_pool = True
 
-TYPE_NAMES_UK = {
-    "irbm": "МБР",
-    "ballistic": "Балістика",
-}
-
-
 CONFIRMED_DEAD_REASON = "Unregistered"
 
 MISMATCH_REASONS = {"BadDeviceToken", "DeviceTokenNotForTopic"}
 
 UNUSABLE_TOKEN_REASONS = MISMATCH_REASONS | {CONFIRMED_DEAD_REASON}
-
-ALERT_SOUND = "alert.caf"
-SILENT_SOUND = "silent.caf"
-
-DEFAULT_CRITICAL_VOLUME = 1.0
-
-SOUND_CHOICES = ("alert.caf", "pulse.caf", "opovishchennia.caf")
-
-TITLE_LIMIT = 110
-BODY_LIMIT = 178
 
 BACKGROUND_PRIORITY = 5
 
@@ -73,9 +67,6 @@ SILENT_PAYLOAD = {"aps": {"content-available": 1}}
 
 PROBE_CONCURRENCY = 4
 
-INBOUND_TTL_SEC = 60
-WARNING_TTL_SEC = 300
-ALL_CLEAR_TTL_SEC = 300
 PROBE_TTL_SEC = 0
 
 LA_ATTRIBUTES_TYPE = "ThreatActivityAttributes"
@@ -95,37 +86,6 @@ class SendOutcome:
     ok: bool
     reason: str | None = None
 
-
-SENTENCE_END = re.compile(r"(.+?[.!?…])(?:\s|$)")
-
-
-def first_sentence(text: str) -> str:
-    flat = " ".join(text.split())
-    match = SENTENCE_END.match(flat)
-    if match:
-        flat = match.group(1)
-    return flat.rstrip(".")
-
-
-def critical_volume(device: dict) -> float:
-    raw = device.get("critical_volume")
-    if raw is None:
-        return DEFAULT_CRITICAL_VOLUME
-    return round(min(1.0, max(0.0, float(raw))), 2)
-
-
-def push_alert(text: str, fallback: str) -> dict:
-    lines = [" ".join(line.split()) for line in text.splitlines()]
-    lines = [line for line in lines if line]
-    if not lines:
-        return {"title": fallback}
-    title = lines[0]
-    if len(title) > TITLE_LIMIT:
-        title = title[:TITLE_LIMIT - 1] + "…"
-    alert = {"title": title}
-    if len(lines) > 1:
-        alert["body"] = " ".join(lines[1:])[:BODY_LIMIT]
-    return alert
 
 class PushService:
     def __init__(
@@ -160,55 +120,12 @@ class PushService:
         self, devices: list[dict], threat: DetectedThreat, ts: datetime,
         source: str | None = None,
     ) -> int:
-        type_name = TYPE_NAMES_UK.get(threat.type, "Небезпека")
-        alert = push_alert(threat.text, fallback=f"{type_name} — Київ")
-        payload = {
-            "kind": "detection",
-            "type": threat.type,
-            "severity": threat.severity,
-            "source": source,
-            "text": threat.text,
-            "ts": iso_kyiv(ts),
-        }
-        if threat.severity == "warning":
-            tokens = [d["token"] for d in devices if d.get("warnings", True)]
-            aps = {
-                "alert": alert,
-                "sound": SILENT_SOUND,
-                "interruption-level": "time-sensitive",
-            }
-            return await self._fan_out(
-                tokens, {"aps": aps, **payload}, priority=10, ttl=WARNING_TTL_SEC,
-            )
-
-        groups: dict[tuple[str, bool, float], list[str]] = {}
-        for device in devices:
-            sound_name = device.get("sound") or ALERT_SOUND
-            if sound_name not in SOUND_CHOICES:
-                sound_name = ALERT_SOUND
-            critical = self._config.critical_alerts and bool(device.get("critical"))
-            volume = critical_volume(device) if critical else DEFAULT_CRITICAL_VOLUME
-            key = (sound_name, critical, volume)
-            groups.setdefault(key, []).append(device["token"])
-
-        async def send_group(key: tuple[str, bool, float], tokens: list[str]) -> int:
-            sound_name, critical, volume = key
-            sound: dict | str = sound_name
-            level = "time-sensitive"
-            if critical:
-                sound = {"critical": 1, "name": sound_name, "volume": volume}
-                level = "critical"
-            aps = {
-                "alert": alert,
-                "sound": sound,
-                "interruption-level": level,
-            }
-            return await self._fan_out(
-                tokens, {"aps": aps, **payload}, priority=10, ttl=INBOUND_TTL_SEC,
-            )
-
+        batches = detection_batches(
+            devices, threat, ts, source, self._config.critical_alerts,
+        )
         results = await asyncio.gather(
-            *(send_group(key, tokens) for key, tokens in groups.items())
+            *(self._fan_out(b.tokens, b.payload, priority=b.priority, ttl=b.ttl)
+              for b in batches)
         )
         return sum(results)
 
@@ -216,21 +133,10 @@ class PushService:
         self, devices: list[dict], text: str, ts: datetime,
         source: str | None = None,
     ) -> int:
-        payload = {
-            "aps": {
-                "alert": push_alert(text, fallback="Відбій — Київ"),
-                "sound": SILENT_SOUND,
-                "interruption-level": "time-sensitive",
-            },
-            "kind": "all_clear",
-            "type": "all_clear",
-            "severity": "clear",
-            "source": source,
-            "text": text,
-            "ts": iso_kyiv(ts),
-        }
-        tokens = [d["token"] for d in devices]
-        return await self._fan_out(tokens, payload, priority=10, ttl=ALL_CLEAR_TTL_SEC)
+        batch = all_clear_batch(devices, text, ts, source)
+        return await self._fan_out(
+            batch.tokens, batch.payload, priority=batch.priority, ttl=batch.ttl,
+        )
 
     async def send_live_activity(
         self, tokens: list[str], event: str, content_state: dict, ts: datetime,

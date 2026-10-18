@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
@@ -13,12 +13,26 @@ from .api import router
 from .config import Config
 from .danger_service import DangerService, DetectedThreat
 from .db import Database
+from .decide import (
+    BARE_NO_CONTEXT,
+    BARE_WARNING_OFF,
+    CLEAR_OUTSIDE,
+    CLEAR_REPEAT,
+    CRUISE_LEADS,
+    NO_MATCH,
+    SAFETY,
+    TYPE_OFF,
+    WARNING_OFF,
+    all_clear_due,
+    decide,
+)
 from .ingest import Ingest
-from .profiles import profile_for
-from .push import PushService, first_sentence
+from .mtproto import MtprotoSource
+from .push import PushService
 from .state import Episode, PushLedger, SkyContext
 
 LA_DISMISS_SEC = 600
+EDGE_LA_FRESH_SEC = 120
 
 class _TrimAccessLog(logging.Filter):
     QUIET = {"/health"}
@@ -48,6 +62,7 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telethon").setLevel(logging.WARNING)
 
 for _handler in logging.getLogger().handlers:
     _handler.addFilter(_ShortName())
@@ -76,70 +91,53 @@ class AppContext:
     ingest: Ingest | None
     sky: SkyContext
     episode: Episode | None = None
+    mtproto: MtprotoSource | None = None
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
         short = brief(text)
-        profile = profile_for(source)
-        evaluation = self.danger.evaluate(text, profile)
-        if evaluation.safety:
-            if self.sky.ballistic_live(ts):
+        decision = decide(
+            self.danger, self.sky, self.config.push_types, self.config.push_warnings,
+            source, text, ts,
+        )
+        if decision.marked_other:
+            logger.debug("%s: other weapon marks context — %s", source, short)
+        if decision.marked_cruise:
+            logger.debug("%s: cruise marks context — %s", source, short)
+        outcome = decision.outcome
+        if outcome == SAFETY:
+            if decision.was_live:
                 logger.info("%s: safety cleared ballistic context — %s", source, short)
             else:
                 logger.info("%s: safety, no live context — %s", source, short)
-            self.sky.clear()
-            if evaluation.all_clear:
+            if decision.all_clear:
                 await self._announce_all_clear(source, text, ts)
             return
-        if evaluation.other_weapon:
-            logger.debug("%s: other weapon marks context — %s", source, short)
-            self.sky.mark_other(ts)
-        if self.danger.is_cruise(text):
-            logger.debug("%s: cruise marks context — %s", source, short)
-            self.sky.mark_cruise(ts)
-
-        threat = evaluation.detection
-        bare = False
-        if threat is not None:
-            if threat.type not in self.config.push_types:
-                logger.debug("%s: %s not in PUSH_TYPES — %s", source, threat.type, short)
-                return
-            if evaluation.guessed and self.sky.cruise_leads(ts):
-                logger.info("%s: bare missile dropped, cruise in the air — %s",
-                            source, short)
-                return
-            if not evaluation.forecast:
-                self.sky.mark_ballistic(ts)
-            threat = replace(threat, severity=self.danger.siren_severity(
-                text, threat.severity, profile))
-            if threat.severity == "warning" and not self.config.push_warnings:
-                logger.info("%s: %s warning silent, PUSH_WARNINGS off — %s",
-                            source, threat.type, short)
-                return
-        elif evaluation.bare_target:
-            if not self.sky.ballistic_leads(ts):
-                logger.info("%s: bare target dropped, no ballistic context — %s",
-                            source, short)
-                return
-            severity = self.danger.siren_severity(
-                text, self.danger.bare_severity(text), profile)
-            if severity == "warning" and not self.config.push_warnings:
-                logger.info("%s: bare warning silent, PUSH_WARNINGS off — %s",
-                            source, short)
-                return
-            threat = DetectedThreat(type="ballistic", text=text, severity=severity)
-            bare = True
-        else:
+        if outcome == TYPE_OFF:
+            logger.debug("%s: %s not in PUSH_TYPES — %s",
+                         source, decision.threat.type, short)
+            return
+        if outcome == CRUISE_LEADS:
+            logger.info("%s: bare missile dropped, cruise in the air — %s",
+                        source, short)
+            return
+        if outcome == WARNING_OFF:
+            logger.info("%s: %s warning silent, PUSH_WARNINGS off — %s",
+                        source, decision.threat.type, short)
+            return
+        if outcome == BARE_NO_CONTEXT:
+            logger.info("%s: bare target dropped, no ballistic context — %s",
+                        source, short)
+            return
+        if outcome == BARE_WARNING_OFF:
+            logger.info("%s: bare warning silent, PUSH_WARNINGS off — %s",
+                        source, short)
+            return
+        if outcome == NO_MATCH:
             logger.debug("%s: no match — %s", source, short)
             return
 
-        if threat.severity == "warning" and profile.trim_warning_push:
-            threat = replace(threat, text=first_sentence(threat.text))
-
-        label = f"{threat.severity}/{threat.type}"
-        if bare:
-            label += " (context)"
-        elif evaluation.forecast:
-            label += " (forecast)"
+        threat = decision.threat
+        label = decision.label
 
         async def record(pushed: bool) -> None:
             await self.db.insert_push(
@@ -182,6 +180,25 @@ class AppContext:
         self.ledger.note(threat, ts)
         await record(pushed=True)
         await self._episode_note(threat, ts, pushed=True)
+
+    async def record_edge_decision(
+        self, channel: str, type_: str, severity: str, text: str, push_text: str,
+        ts: datetime, pushed: bool,
+    ) -> bool:
+        if await self.db.has_push(channel, type_, ts, text):
+            return False
+        await self.db.insert_push(channel, type_, severity, text, ts, pushed=pushed)
+        logger.info("%s: edge %s/%s %s — %s", channel, severity, type_,
+                    "pushed" if pushed else "not pushed", brief(text))
+        if (datetime.now(UTC) - ts).total_seconds() > EDGE_LA_FRESH_SEC:
+            return True
+        if type_ == "all_clear":
+            if pushed:
+                await self.end_episode(ts, clear_text=text)
+        else:
+            threat = DetectedThreat(type=type_, text=push_text or text, severity=severity)
+            await self._episode_note(threat, ts, pushed=pushed)
+        return True
 
     async def _episode_note(self, threat: DetectedThreat, ts: datetime, pushed: bool) -> None:
         gap = timedelta(minutes=self.config.la_timeout_min)
@@ -257,11 +274,14 @@ class AppContext:
         short = brief(text)
         window = timedelta(minutes=self.config.all_clear_window_min)
         last_threat = await self.db.last_pushed_threat()
-        if last_threat is None or ts - last_threat > window:
+        last_clear = None
+        if last_threat is not None and ts - last_threat <= window:
+            last_clear = await self.db.last_pushed_clear()
+        verdict = all_clear_due(ts, last_threat, last_clear, window)
+        if verdict == CLEAR_OUTSIDE:
             logger.info("%s: all clear outside an episode — %s", source, short)
             return
-        last_clear = await self.db.last_pushed_clear()
-        if last_clear is not None and last_clear >= last_threat:
+        if verdict == CLEAR_REPEAT:
             logger.info("%s: all clear already announced — %s", source, short)
             return
 
@@ -326,12 +346,20 @@ async def lifespan(app: FastAPI):
         push=push, ingest=None,
         sky=SkyContext(ttl=timedelta(minutes=config.context_ttl_min)),
     )
-    ctx.ingest = Ingest(config, ctx.handle_message)
     tasks = [
-        asyncio.create_task(ctx.ingest.run()),
         asyncio.create_task(push.keep_warm()),
         asyncio.create_task(ctx.episode_watchdog()),
     ]
+    if config.ingest_enabled:
+        ctx.ingest = Ingest(config, ctx.handle_message)
+        tasks.append(asyncio.create_task(ctx.ingest.run()))
+        if config.mtproto_configured:
+            ctx.mtproto = MtprotoSource(config, ctx.ingest)
+            tasks.append(asyncio.create_task(ctx.mtproto.run()))
+        else:
+            logger.warning("mtproto not configured — polling t.me/s only")
+    else:
+        logger.warning("ingest off — alerts and the feed come from the edge worker")
 
     app.state.ctx = ctx
     try:

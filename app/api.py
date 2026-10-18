@@ -1,9 +1,11 @@
+import hmac
 import logging
 import time
-from typing import Annotated
+from datetime import datetime
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .push import SOUND_CHOICES
 
@@ -20,6 +22,13 @@ async def check_api_key(request: Request, x_api_key: Annotated[str | None, Heade
     if expected and x_api_key != expected:
         raise HTTPException(status_code=401, detail="invalid api key")
 
+async def check_edge_key(request: Request, x_edge_key: Annotated[str | None, Header()] = None):
+    expected = _ctx(request).config.edge_key
+    if not expected or not hmac.compare_digest(
+        (x_edge_key or "").encode(), expected.encode(),
+    ):
+        raise HTTPException(status_code=401, detail="invalid edge key")
+
 LA_TOKEN = Field(default=None, min_length=32, max_length=400, pattern=r"^[0-9a-fA-F]+$")
 
 CRITICAL_VOLUME = Field(default=None, ge=0.0, le=1.0)
@@ -33,6 +42,15 @@ class DeviceRegistration(BaseModel):
     critical_volume: float | None = CRITICAL_VOLUME
     la_start_token: str | None = LA_TOKEN
     la_update_token: str | None = LA_TOKEN
+    model: str | None = Field(default=None, max_length=64)
+    ios_version: str | None = Field(default=None, max_length=32)
+
+    @field_validator("model", "ios_version")
+    @classmethod
+    def _printable(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return "".join(ch for ch in value if ch.isprintable()).strip() or None
 
 @router.post("/devices", dependencies=[Depends(check_api_key)])
 async def register_device(body: DeviceRegistration, request: Request) -> dict:
@@ -47,10 +65,11 @@ async def register_device(body: DeviceRegistration, request: Request) -> dict:
     await ctx.db.upsert_device(
         token, body.warnings, body.sound,
         _lower(body.la_start_token), _lower(body.la_update_token),
-        body.critical, body.critical_volume,
+        body.critical, body.critical_volume, body.model, body.ios_version,
     )
-    logger.info("device registered %s… critical=%s (%d total)",
-                token[:8], body.critical, len(await ctx.db.tokens()))
+    logger.info("device registered %s… critical=%s model=%s ios=%s (%d total)",
+                token[:8], body.critical, body.model, body.ios_version,
+                len(await ctx.db.tokens()))
     return {"ok": True}
 
 
@@ -102,15 +121,54 @@ async def alerts(
 ) -> dict:
     return {"alerts": await _ctx(request).db.recent_pushes(limit, before)}
 
+DEVICE_TOKEN = Field(min_length=32, max_length=200, pattern=r"^[0-9a-fA-F]+$")
+
+
+class EdgeDecision(BaseModel):
+    channel: str = Field(min_length=1, max_length=64)
+    type: Literal["ballistic", "irbm", "all_clear"]
+    severity: Literal["inbound", "warning", "clear"]
+    text: str = Field(max_length=8192)
+    push_text: str = Field(default="", max_length=8192)
+    ts: datetime
+    pushed: bool
+
+
+class EdgeReport(BaseModel):
+    decisions: list[EdgeDecision] = Field(default_factory=list, max_length=500)
+    dead_tokens: list[Annotated[str, DEVICE_TOKEN]] = Field(default_factory=list, max_length=500)
+
+
+@router.get("/edge/devices", dependencies=[Depends(check_edge_key)])
+async def edge_devices(request: Request) -> dict:
+    return {"devices": await _ctx(request).db.tokens()}
+
+
+@router.post("/edge/report", dependencies=[Depends(check_edge_key)])
+async def edge_report(body: EdgeReport, request: Request) -> dict:
+    ctx = _ctx(request)
+    stored = 0
+    for d in body.decisions:
+        if await ctx.record_edge_decision(
+            d.channel, d.type, d.severity, d.text, d.push_text, d.ts, d.pushed,
+        ):
+            stored += 1
+    for token in body.dead_tokens:
+        await ctx.db.delete_device(token.lower())
+        logger.info("device %s… removed by edge: Unregistered", token[:8])
+    return {"stored": stored, "removed": len(body.dead_tokens)}
+
+
 @router.get("/health")
 async def health(request: Request) -> dict:
     ctx = _ctx(request)
     ingest = ctx.ingest
     now = time.time()
+    ingest_on = ctx.config.ingest_enabled
     connected = bool(ingest and ingest.connected)
-    degraded = not connected
+    degraded = ingest_on and not connected
     channels = {}
-    for channel in ctx.config.channels:
+    for channel in ctx.config.channels if ingest_on else []:
         state = ingest.channel_state(channel) if ingest else "starting"
         if state != "ok":
             degraded = True
@@ -119,8 +177,15 @@ async def health(request: Request) -> dict:
             "state": state,
             "last_message_sec": round(now - last) if last is not None else None,
         }
+    mtproto = "off"
+    if ctx.mtproto is not None:
+        mtproto = "ok" if ctx.mtproto.connected else "down"
+        if mtproto != "ok":
+            degraded = True
     return {
         "status": "degraded" if degraded else "ok",
         "connected": connected,
+        "ingest": "on" if ingest_on else "off",
+        "mtproto": mtproto,
         "channels": channels,
     }

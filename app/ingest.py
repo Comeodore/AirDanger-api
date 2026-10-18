@@ -1,8 +1,6 @@
 import asyncio
-import html as html_lib
 import logging
 import random
-import re
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -12,6 +10,7 @@ from datetime import UTC, datetime
 import httpx
 
 from .config import Config
+from .tme import parse_messages, strip_html
 
 logger = logging.getLogger(__name__)
 
@@ -30,41 +29,11 @@ BACKOFF_CEILING_SEC = 15.0
 
 HOSTS = ("t.me", "telegram.me")
 
+TME = "tme"
+BRIEF_LIMIT = 80
+
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
 
-_POST_RE = re.compile(r'data-post="[^"/]+/(\d+)"')
-_TEXT_RE = re.compile(
-    r'class="tgme_widget_message_text js-message_text[^"]*"[^>]*>(.*?)</div>', re.S
-)
-_TIME_RE = re.compile(r'<time datetime="([^"]+)"')
-_BR_RE = re.compile(r"<br\s*/?>", re.I)
-_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def strip_html(fragment: str) -> str:
-    fragment = _BR_RE.sub("\n", fragment)
-    return html_lib.unescape(_TAG_RE.sub("", fragment)).strip()
-
-def parse_messages(page: str) -> list[tuple[int, str, datetime | None]]:
-    messages: list[tuple[int, str, datetime | None]] = []
-    posts = list(_POST_RE.finditer(page))
-    for i, match in enumerate(posts):
-        block = page[match.end(): posts[i + 1].start() if i + 1 < len(posts) else len(page)]
-        text_match = _TEXT_RE.search(block)
-        if text_match is None:
-            continue
-        text = strip_html(text_match.group(1))
-        if not text:
-            continue
-        ts = None
-        if time_match := _TIME_RE.search(block):
-            try:
-                ts = datetime.fromisoformat(time_match.group(1))
-            except ValueError:
-                ts = None
-        messages.append((int(match.group(1)), text, ts))
-    messages.sort(key=lambda m: m[0])
-    return messages
 
 @dataclass
 class ChannelHealth:
@@ -82,6 +51,7 @@ class Ingest:
         self._config = config
         self._on_message = on_message
         self._seen: dict[str, deque[int]] = {}
+        self._baselined: set[tuple[str, str]] = set()
         self._lock = asyncio.Lock()
         self._last_ok = 0.0
         self._health: dict[str, ChannelHealth] = {}
@@ -103,10 +73,14 @@ class Ingest:
             return "unreachable"
         return "ok"
 
-    def seed(self, channel: str, ids: list[int]) -> bool:
-        if channel in self._seen:
+    def baseline(self, source: str, channel: str, ids: list[int]) -> bool:
+        if (source, channel) in self._baselined:
             return False
-        self._seen[channel] = deque(ids, maxlen=SEEN_LIMIT)
+        self._baselined.add((source, channel))
+        seen = self._seen.setdefault(channel, deque(maxlen=SEEN_LIMIT))
+        for msg_id in sorted(ids):
+            if msg_id not in seen:
+                seen.append(msg_id)
         return True
 
     async def run(self) -> None:
@@ -153,8 +127,8 @@ class Ingest:
                 return
             self._see(channel)
             ids = [msg_id for msg_id, _, _ in messages]
-            if self.seed(channel, ids):
-                logger.info("watching %s from message %d", channel, max(ids))
+            if self.baseline(TME, channel, ids):
+                logger.info("watching %s via %s from message %d", channel, TME, max(ids))
                 return
             for msg_id, text, ts in messages:
                 await self.deliver(channel, msg_id, text, ts or datetime.now(UTC))
@@ -238,7 +212,9 @@ class Ingest:
                 channel, page_bytes, now - health.blind_since,
             )
 
-    async def deliver(self, channel: str, msg_id: int, text: str, ts: datetime) -> None:
+    async def deliver(
+        self, channel: str, msg_id: int, text: str, ts: datetime, source: str = TME,
+    ) -> None:
         async with self._lock:
             seen = self._seen.setdefault(channel, deque(maxlen=SEEN_LIMIT))
             if msg_id in seen:
@@ -252,6 +228,8 @@ class Ingest:
                     logger.info("%s: message %d skipped, %.0fs old", channel, msg_id, age)
                 seen.append(msg_id)
                 return
+            logger.info("%s: message %d via %s, %.1fs after post — %s",
+                        channel, msg_id, source, age, " ".join(text.split())[:BRIEF_LIMIT])
             self.last_message_at[channel] = time.time()
             try:
                 await self._on_message(channel, text, ts)

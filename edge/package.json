@@ -1,0 +1,16 @@
+{
+  "name": "airdanger-edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild edge.js --bundle --format=esm --platform=browser --conditions=worker,browser --target=es2022 --external:./mtcute.wasm --external:cloudflare:workers --minify --legal-comments=none --outfile=dist/edge.js && cp node_modules/@mtcute/wasm/mtcute.wasm dist/mtcute.wasm",
+    "test": "node test/build.mjs && node --test test/edge.test.mjs"
+  },
+  "dependencies": {
+    "@mtcute/convert": "0.32.5",
+    "@mtcute/web": "0.32.5"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

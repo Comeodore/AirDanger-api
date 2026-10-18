@@ -6,3 +6,5 @@ __pycache__/
 .env.*
 *.p8
 *.pem
+edge/node_modules/
+edge/dist/

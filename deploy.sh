@@ -15,7 +15,7 @@ ssh_do "mkdir -p $REMOTE_DIR"
 echo "==> rsync code -> $REMOTE_DIR (secrets & vcs excluded)"
 rsync -az --delete -e "ssh -p $SSH_PORT" \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
-  --exclude '.env*' \
+  --exclude '.env*' --exclude 'edge/node_modules' --exclude 'edge/dist' \
   ./ "$HOST:$REMOTE_DIR/"
 
 echo "==> detect current published host port (reuse it so routing is unchanged)"

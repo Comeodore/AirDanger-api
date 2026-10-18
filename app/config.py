@@ -36,6 +36,12 @@ class Config:
     context_ttl_min: int = 20
     all_clear_window_min: int = 60
     la_timeout_min: int = 15
+    tg_api_id: int = 0
+    tg_api_hash: str = field(default="", repr=False)
+    tg_session: str = field(default="", repr=False)
+    mtproto_pull_sec: float = 3.0
+    edge_key: str = field(default="", repr=False)
+    ingest_enabled: bool = True
     _apns_key_path: str | None = field(default=None, repr=False)
 
     @classmethod
@@ -67,7 +73,17 @@ class Config:
             context_ttl_min=int(os.environ.get("CONTEXT_TTL_MIN") or 20),
             all_clear_window_min=int(os.environ.get("ALL_CLEAR_WINDOW_MIN") or 60),
             la_timeout_min=int(os.environ.get("LA_TIMEOUT_MIN") or 15),
+            tg_api_id=int(os.environ.get("TG_API_ID") or 0),
+            tg_api_hash=os.environ.get("TG_API_HASH", "").strip(),
+            tg_session=os.environ.get("TG_SESSION", "").strip(),
+            mtproto_pull_sec=float(os.environ.get("MTPROTO_PULL_SEC") or 3),
+            edge_key=os.environ.get("EDGE_KEY", "").strip(),
+            ingest_enabled=_bool("INGEST", default=True),
         )
+
+    @property
+    def mtproto_configured(self) -> bool:
+        return bool(self.tg_api_id and self.tg_api_hash and self.tg_session)
 
     @property
     def apns_configured(self) -> bool:

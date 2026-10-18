@@ -24,14 +24,15 @@ class Database:
         self, token: str, warnings: bool | None = None, sound: str | None = None,
         la_start_token: str | None = None, la_update_token: str | None = None,
         critical: bool | None = None, critical_volume: float | None = None,
+        model: str | None = None, ios_version: str | None = None,
     ) -> None:
         await self._pool.execute(
             """INSERT INTO devices (token, updated_at, warnings, sound,
                                     la_start_token, la_update_token,
-                                    critical, critical_volume)
+                                    critical, critical_volume, model, ios_version)
                VALUES ($1, now(), coalesce($2, true), coalesce($3, 'alert.caf'), $4, $5,
                        coalesce($6::boolean, false),
-                       coalesce($7::double precision, 1))
+                       coalesce($7::double precision, 1), $8, $9)
                ON CONFLICT (token) DO UPDATE SET
                    updated_at = now(),
                    warnings = coalesce($2, devices.warnings),
@@ -40,9 +41,11 @@ class Database:
                    la_update_token = coalesce($5, devices.la_update_token),
                    critical = coalesce($6::boolean, devices.critical),
                    critical_volume = coalesce($7::double precision,
-                                              devices.critical_volume)""",
+                                              devices.critical_volume),
+                   model = coalesce($8, devices.model),
+                   ios_version = coalesce($9, devices.ios_version)""",
             token, warnings, sound, la_start_token, la_update_token,
-            critical, critical_volume,
+            critical, critical_volume, model, ios_version,
         )
 
     async def update_device_prefs(
@@ -96,7 +99,8 @@ class Database:
 
     async def tokens(self) -> list[dict]:
         rows = await self._pool.fetch(
-            "SELECT token, warnings, sound, critical, critical_volume FROM devices"
+            "SELECT token, warnings, sound, critical, critical_volume, model, ios_version "
+            "FROM devices"
         )
         return [dict(row) for row in rows]
 
@@ -109,6 +113,13 @@ class Database:
                VALUES ($1, $2, $3, $4, $5, $6)""",
             channel, type_, severity, text, ts, pushed,
         )
+
+    async def has_push(self, channel: str, type_: str, ts: datetime, text: str) -> bool:
+        return bool(await self._pool.fetchval(
+            """SELECT 1 FROM pushes
+               WHERE channel = $1 AND type = $2 AND ts = $3 AND text = $4 LIMIT 1""",
+            channel, type_, ts, text,
+        ))
 
     async def recent_pushes(self, limit: int, before: int | None = None) -> list[dict]:
         rows = await self._pool.fetch(
