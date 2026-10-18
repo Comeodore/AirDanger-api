@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
@@ -92,6 +92,8 @@ class AppContext:
     sky: SkyContext
     episode: Episode | None = None
     mtproto: MtprotoSource | None = None
+    edge_seen_at: float | None = None
+    started_at: float = field(default_factory=time.time)
 
     async def handle_message(self, source: str, text: str, ts: datetime) -> None:
         short = brief(text)

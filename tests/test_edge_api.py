@@ -1,10 +1,11 @@
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI
 
-from app.api import router
+from app.api import EDGE_SILENT_SEC, router
 from test_pipeline import FakeDB, make_ctx
 
 KEY = "edge-secret"
@@ -138,11 +139,68 @@ async def test_a_reported_all_clear_ends_the_live_activity():
     assert [event for event, _, _ in ctx.push.activity] == ["start", "end"]
 
 
-async def test_health_does_not_degrade_when_ingest_is_switched_off():
+async def health_of(ctx) -> dict:
+    async with client(make_app(ctx)) as http:
+        return (await http.get("/health")).json()
+
+
+def edge_only_ctx(started_ago: float = 0.0):
     ctx = edge_ctx()
     ctx.config.ingest_enabled = False
-    app = make_app(SimpleNamespace(config=ctx.config, ingest=None, mtproto=None))
-    async with client(app) as http:
-        body = (await http.get("/health")).json()
+    ctx.started_at = time.time() - started_ago
+    return ctx
+
+
+async def test_health_does_not_degrade_when_ingest_is_switched_off():
+    body = await health_of(edge_only_ctx())
     assert body["status"] == "ok"
     assert body["ingest"] == "off"
+
+
+async def test_health_gives_the_edge_five_minutes_after_a_restart():
+    body = await health_of(edge_only_ctx(started_ago=EDGE_SILENT_SEC - 10))
+    assert (body["status"], body["edge"], body["edge_last_seen_sec"]) == ("ok", "waiting", None)
+
+
+async def test_health_degrades_when_the_edge_never_comes():
+    body = await health_of(edge_only_ctx(started_ago=EDGE_SILENT_SEC + 10))
+    assert (body["status"], body["edge"]) == ("degraded", "silent")
+
+
+async def test_an_edge_visit_keeps_health_green():
+    ctx = edge_only_ctx(started_ago=3600)
+    async with client(make_app(ctx)) as http:
+        await http.get("/edge/devices", headers={"x-edge-key": KEY})
+        body = (await http.get("/health")).json()
+    assert (body["status"], body["edge"], body["edge_last_seen_sec"]) == ("ok", "ok", 0)
+
+
+async def test_a_report_counts_as_a_visit():
+    ctx = edge_only_ctx(started_ago=3600)
+    async with client(make_app(ctx)) as http:
+        await http.post("/edge/report", headers={"x-edge-key": KEY}, json={})
+    assert (await health_of(ctx))["edge"] == "ok"
+
+
+async def test_health_degrades_after_five_silent_minutes():
+    ctx = edge_only_ctx(started_ago=3600)
+    ctx.edge_seen_at = time.time() - EDGE_SILENT_SEC - 1
+    body = await health_of(ctx)
+    assert (body["status"], body["edge"]) == ("degraded", "silent")
+    assert body["edge_last_seen_sec"] >= EDGE_SILENT_SEC
+
+
+async def test_a_wrong_key_is_not_a_visit():
+    ctx = edge_only_ctx(started_ago=3600)
+    async with client(make_app(ctx)) as http:
+        await http.get("/edge/devices", headers={"x-edge-key": "nope"})
+    assert (await health_of(ctx))["status"] == "degraded"
+
+
+async def test_a_silent_edge_does_not_degrade_home_polling():
+    ctx = edge_ctx()
+    ctx.started_at = time.time() - 3600
+    ctx.ingest = SimpleNamespace(connected=True, last_message_at={},
+                                 channel_state=lambda channel: "ok")
+    body = await health_of(ctx)
+    assert (body["status"], body["edge"]) == ("ok", "silent")

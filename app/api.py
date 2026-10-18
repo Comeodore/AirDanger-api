@@ -141,12 +141,15 @@ class EdgeReport(BaseModel):
 
 @router.get("/edge/devices", dependencies=[Depends(check_edge_key)])
 async def edge_devices(request: Request) -> dict:
-    return {"devices": await _ctx(request).db.tokens()}
+    ctx = _ctx(request)
+    ctx.edge_seen_at = time.time()
+    return {"devices": await ctx.db.tokens()}
 
 
 @router.post("/edge/report", dependencies=[Depends(check_edge_key)])
 async def edge_report(body: EdgeReport, request: Request) -> dict:
     ctx = _ctx(request)
+    ctx.edge_seen_at = time.time()
     stored = 0
     for d in body.decisions:
         if await ctx.record_edge_decision(
@@ -157,6 +160,19 @@ async def edge_report(body: EdgeReport, request: Request) -> dict:
         await ctx.db.delete_device(token.lower())
         logger.info("device %s… removed by edge: Unregistered", token[:8])
     return {"stored": stored, "removed": len(body.dead_tokens)}
+
+
+EDGE_SILENT_SEC = 300
+
+
+def edge_state(ctx, now: float) -> tuple[str, int | None]:
+    seen = ctx.edge_seen_at
+    if seen is not None:
+        ago = now - seen
+        return ("ok" if ago <= EDGE_SILENT_SEC else "silent"), round(ago)
+    if now - ctx.started_at <= EDGE_SILENT_SEC:
+        return "waiting", None
+    return "silent", None
 
 
 @router.get("/health")
@@ -182,10 +198,15 @@ async def health(request: Request) -> dict:
         mtproto = "ok" if ctx.mtproto.connected else "down"
         if mtproto != "ok":
             degraded = True
+    edge, edge_ago = edge_state(ctx, now)
+    if not ingest_on and edge == "silent":
+        degraded = True
     return {
         "status": "degraded" if degraded else "ok",
         "connected": connected,
         "ingest": "on" if ingest_on else "off",
         "mtproto": mtproto,
+        "edge": edge,
+        "edge_last_seen_sec": edge_ago,
         "channels": channels,
     }
