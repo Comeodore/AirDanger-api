@@ -322,6 +322,28 @@ WARNING_MARKERS = [
     r"\b(крим|криму|таганро[гз]|ростов|міллеров)\w*",
 ]
 
+SECTOR_THREAT = [
+    r"\bзагроз\w*\s+(?:застосування\s+)?баліст\w*",
+]
+
+SECTOR_REGION = [
+    r"\bобласт\w*",
+    r"\b\w+щин\w*",
+]
+
+SECTOR_NORTH = [
+    r"\bпівноч\w*",
+    r"\bпівніч\w*",
+]
+
+SECTOR_ELSEWHERE = [
+    r"\bпівд\w*",
+    r"\bсход\w*",
+    r"\bсхід\b",
+    r"\bзах[іо]д\w*",
+    r"\b(?:з|із|зі)\s+\w+",
+]
+
 
 @dataclass(frozen=True)
 class DetectedThreat:
@@ -369,6 +391,10 @@ class DangerService:
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
         self._warning_markers = matcher.compile_patterns(WARNING_MARKERS)
         self._forecast_markers = matcher.compile_patterns(FORECAST_MARKERS)
+        self._sector_threat = matcher.compile_patterns(SECTOR_THREAT)
+        self._sector_region = matcher.compile_patterns(SECTOR_REGION)
+        self._sector_north = matcher.compile_patterns(SECTOR_NORTH)
+        self._sector_elsewhere = matcher.compile_patterns(SECTOR_ELSEWHERE)
         self._profile_veto: dict[str, list] = {}
 
     def is_all_clear(self, text: str) -> bool:
@@ -438,6 +464,20 @@ class DangerService:
             cached = self._matcher.compile_patterns(list(profile.extra_veto))
             self._profile_veto[profile.name] = cached
         return bool(self._matcher.match_first(cached, text))
+
+    def sector_warning(self, text: str) -> bool:
+        if not self._matcher.match_first(self._sector_threat, text):
+            return False
+        if geo.elsewhere_target(text) or self._matcher.match_first(
+            self._sector_region, text
+        ):
+            return False
+        if self._matcher.match_first(self._sector_north, text):
+            return True
+        return not (
+            geo.other_site(text)
+            or self._matcher.match_first(self._sector_elsewhere, text)
+        )
 
     def is_forecast(self, text: str, severity: str) -> bool:
         return severity == "warning" and bool(
@@ -518,6 +558,8 @@ class DangerService:
 
         if profile.require_kyiv:
             if not geo.kyiv_bound(text):
+                if profile.sector_warnings and self.sector_warning(text):
+                    return self._ballistic_hit(text, "warning")
                 return Evaluation()
         elif geo.aimed_elsewhere(text):
             return Evaluation()

@@ -874,6 +874,52 @@ async def test_kpszsu_missile_on_kyiv_is_a_launch():
         assert ctx.push.sent == [text], text
 
 
+async def test_kpszsu_north_and_unnamed_ballistic_threats_are_quiet_warnings():
+    for text in (
+        "☄️ Загроза застосування балістичного озброєння з півночі.",
+        "☄️ Загроза застосування балістичного озброєння з північного сходу!",
+        "☄️ Загроза застосування балістичного озброєння з північно-східного напрямку.",
+        "☄️ Загроза балістики (північ)",
+        "☄️ Загроза застосування балістичного озброєння з півночі, сходу та південного сходу!",
+        "☄️ Загроза застосування балістичного озброєння",
+        "Загроза застосування балістичного озброєння.",
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(KPSZSU, text, T0)
+        assert ctx.push.sent == [text], text
+        assert ctx.db.pushes[0][2] == "warning", text
+
+
+async def test_kpszsu_south_east_and_regional_threats_stay_silent():
+    for text in (
+        "☄️ Загроза застосування балістичного озброєння з півдня.",
+        "☄️ Загроза застосування балістичного озброєння зі сходу.",
+        "☄️ Загроза застосування балістичного озброєння з південно-східного напрямку.",
+        "☄️ Загроза балістики (південь)",
+        "☄️ Загроза застосування балістичного озброєння з Криму.",
+        "☄️ Загроза застосування балістичного озброєння з міллірево.",
+        "☄️ Загроза застосування балістичного озброєння для Сумської області.",
+        "☄️ Харківська область - загроза застосування балістичного озброєння!",
+        "☄️ Загроза застосування балістичного озброєння в областях де оголошена повітряна тривога.",
+    ):
+        ctx = make_ctx(push_warnings=True)
+        await ctx.handle_message(KPSZSU, text, T0)
+        assert ctx.push.sent == [], text
+        assert ctx.db.pushes == [], text
+
+
+async def test_a_launch_breaks_the_cooldown_a_kpszsu_sector_warning_started():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        KPSZSU, "☄️ Загроза застосування балістичного озброєння з півночі.", T0)
+    await ctx.handle_message(
+        ROCKETS, "Балістика на Київ/передмістя.", T0 + timedelta(seconds=30))
+    assert ctx.push.sent == [
+        "☄️ Загроза застосування балістичного озброєння з півночі.",
+        "Балістика на Київ/передмістя.",
+    ]
+
+
 async def test_kpszsu_missiles_on_a_cruise_route_stay_silent():
     for text in (
         "🚀Ракети повз Бориспіль на Київ.",
