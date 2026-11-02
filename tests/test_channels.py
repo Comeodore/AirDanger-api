@@ -777,6 +777,25 @@ async def test_a_weapon_that_has_flown_stays_a_siren():
         assert ctx.db.pushes[0][2] == "inbound", text
 
 
+async def test_a_weapon_that_will_come_is_a_warning_that_opens_the_window():
+    ctx = make_ctx(push_warnings=True)
+    await ctx.handle_message(
+        ROCKETS, "Реагуємо, циркони і балістика зараз буде.", T0)
+    assert [p[2] for p in ctx.db.pushes] == ["warning"]
+    await ctx.handle_message(ROCKETS, "Ракета на Київ!", T0 + timedelta(minutes=2))
+    assert [p[2] for p in ctx.db.pushes] == ["warning", "inbound"]
+
+
+async def test_a_live_call_that_says_will_stays_a_siren():
+    for text in (
+        "ще 2 циркони будуть на/повз київ",
+        "Друга слідом пішла. Перша зараз уже буде на спуск.",
+    ):
+        ctx = make_ctx()
+        await ctx.handle_message(ROCKETS, text, T0)
+        assert [p[2] for p in ctx.db.pushes] == ["inbound"], text
+
+
 ABSENT_THREAT = (
     "Загроза балістики відсутня.\n\nВорожі цілі в області не спостерігаються.",
     "Відсутня загроза по балістиці зараз.\n\nВорожі цілі в області не спостерігаються.",

@@ -321,6 +321,9 @@ WARNING_MARKERS = [
     r"\b(з|із)\s+(брянщин|курщин|бєлгородщин|білгородщин)\w*",
     r"\b(крим|криму|таганро[гз]|ростов|міллеров)\w*",
 ]
+FUTURE_MARKERS = [
+    r"\bбуд(?:е|уть)\b",
+]
 
 SECTOR_THREAT = [
     r"\bзагроз\w*\s+(?:застосування\s+)?баліст\w*",
@@ -391,6 +394,7 @@ class DangerService:
         self._inbound_markers = matcher.compile_patterns(INBOUND_MARKERS)
         self._warning_markers = matcher.compile_patterns(WARNING_MARKERS)
         self._forecast_markers = matcher.compile_patterns(FORECAST_MARKERS)
+        self._future_markers = matcher.compile_patterns(FUTURE_MARKERS)
         self._sector_threat = matcher.compile_patterns(SECTOR_THREAT)
         self._sector_region = matcher.compile_patterns(SECTOR_REGION)
         self._sector_north = matcher.compile_patterns(SECTOR_NORTH)
@@ -414,6 +418,8 @@ class DangerService:
         if self._matcher.match_first(self._inbound_markers, text):
             return "inbound"
         if self._matcher.match_first(self._warning_markers, text):
+            return "warning"
+        if self._matcher.match_first(self._future_markers, text):
             return "warning"
         return "inbound"
 
