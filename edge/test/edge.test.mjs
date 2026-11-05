@@ -355,6 +355,16 @@ test("the cron does not re-arm a tick that is running", async () => {
   assert.notEqual(await ctx.storage.getAlarm(), null);
 });
 
+test("the cron re-arms an alarm stuck in the past", async () => {
+  const { poller, ctx } = await baselined({ devices: [MINE] });
+  poller.lastTick = null;
+  await ctx.storage.setAlarm(Date.now() - 90 * 60 * 1000);
+  assert.equal(await poller.ensure(), "armed");
+  assert.ok((await ctx.storage.getAlarm()) > Date.now());
+  await ctx.storage.setAlarm(Date.now() + 2000);
+  assert.equal(await poller.ensure(), "running");
+});
+
 test("t.me/s is fetched with a timeout", async () => {
   const { net } = await baselined({ devices: [MINE] });
   assert.ok(net.tme.length >= 3);

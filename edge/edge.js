@@ -238,10 +238,11 @@ export class Poller extends DurableObject {
   }
 
   async ensure() {
-    if ((await this.ctx.storage.getAlarm()) !== null) return "running";
+    const alarm = await this.ctx.storage.getAlarm();
+    if (alarm !== null && alarm > Date.now() - STALL_MS) return "running";
     if (this.lastTick && Date.now() - this.lastTick.at < STALL_MS) return "running";
     await this.ctx.storage.setAlarm(Date.now() + 1000);
-    console.warn("polling was stopped, re-armed");
+    console.warn(alarm === null ? "polling was stopped, re-armed" : `alarm stuck since ${new Date(alarm).toISOString()}, re-armed`);
     return "armed";
   }
 
