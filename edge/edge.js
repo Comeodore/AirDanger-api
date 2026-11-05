@@ -5,6 +5,8 @@ import wasm from "./mtcute.wasm";
 
 const CHANNELS = ["rocketskyiv", "war_monitor", "kpszsu"];
 const POLL_MS = 2000;
+const POLL_CALM_MS = 6000;
+const CALM_PULL_MS = 10 * 1000;
 const PULL_MS = 3000;
 const PULL_LIMIT = 3;
 const PULL_TIMEOUT_MS = 15 * 1000;
@@ -188,6 +190,7 @@ export class Poller extends DurableObject {
     this.lock = Promise.resolve();
     this.observed = { tme: {}, pull: {}, update: {} };
     this.firsts = { tme: 0, pull: 0, update: 0 };
+    this.missed = new Map();
     this.mt = {
       client: null, starting: null, me: null, disabled: null,
       nextStartAt: Date.now() + MTPROTO_STARTUP_DELAY_MS, bootAt: Date.now(), everOk: false, pulls: {}, signedInAt: null,
@@ -252,8 +255,18 @@ export class Poller extends DurableObject {
       this.syncHome();
       await this.tick();
     } finally {
-      await this.ctx.storage.setAlarm(Date.now() + POLL_MS);
+      await this.ctx.storage.setAlarm(Date.now() + this.pollMs());
     }
+  }
+
+  pollMs() {
+    const mt = this.mt;
+    const now = Date.now();
+    const calm = mt.client && CHANNELS.every((channel) => {
+      const pull = mt.pulls[channel];
+      return pull && pull.lastOk !== null && now - pull.lastOk < CALM_PULL_MS;
+    });
+    return calm ? POLL_CALM_MS : POLL_MS;
   }
 
   async tick() {
@@ -337,6 +350,11 @@ export class Poller extends DurableObject {
       return;
     }
     if (seen.includes(id)) {
+      const missedAt = source === "tme" ? undefined : this.missed.get(`${channel}:${id}`);
+      if (missedAt !== undefined) {
+        this.missed.delete(`${channel}:${id}`);
+        console.warn(`${channel}: message ${id} reached ${source} ${((Date.now() - missedAt) / 1000).toFixed(1)}s after t.me/s`);
+      }
       if (this.verbose) {
         const lag = lagOf(ts);
         console.log(`${channel}: message ${id} also via ${source}` + (lag === null ? "" : `, ${lag.toFixed(1)}s after post`));
@@ -347,7 +365,22 @@ export class Poller extends DurableObject {
     seen.push(id);
     if (seen.length > SEEN_LIMIT) seen.shift();
     this.firsts[source] += 1;
+    if (source === "tme" && this.mt.client) this.noteMissed(channel, id, ts);
     await this.ctx.storage.put({ seen: this.seen, brain: this.brain });
+  }
+
+  noteMissed(channel, id, ts) {
+    const now = Date.now();
+    const pull = this.mt.pulls[channel];
+    const pulled = this.observed.pull[channel] || [];
+    const lag = lagOf(ts);
+    this.missed.set(`${channel}:${id}`, now);
+    if (this.missed.size > OBSERVED_LIMIT) this.missed.delete(this.missed.keys().next().value);
+    console.warn(
+      `${channel}: message ${id} first via t.me/s` + (lag === null ? "" : `, ${lag.toFixed(1)}s after post`) +
+        `; pull ok ${pull && pull.lastOk !== null ? `${((now - pull.lastOk) / 1000).toFixed(1)}s ago` : "never"}` +
+        `, newest pulled ${pulled.length ? Math.max(...pulled) : "none"}, pulling ${this.mt.pulling}`,
+    );
   }
 
   ensureMtproto() {
@@ -882,6 +915,7 @@ export class Poller extends DurableObject {
       mode: this.mode,
       dry_run: this.dryRun,
       log_level: this.logLevel,
+      poll_ms: this.pollMs(),
       devices: this.devices.length,
       only_tokens: this.onlyTokens,
       send_devices: this.sendDevices().map((d) => d.token.slice(0, 8)),

@@ -365,6 +365,45 @@ test("the cron re-arms an alarm stuck in the past", async () => {
   assert.equal(await poller.ensure(), "running");
 });
 
+test("t.me/s slows to 6 s only while every channel pulls", async () => {
+  const { poller, ctx } = await baselined({ devices: [MINE] });
+  assert.equal(poller.pollMs(), 2000);
+  poller.mt.client = { getHistory: async (channel) => [message(channel, 100, "old")] };
+  await poller.pullAll();
+  assert.equal(poller.pollMs(), 6000);
+  await poller.alarm();
+  assert.ok((await ctx.storage.getAlarm()) - Date.now() > 4000);
+  poller.mt.pulls.kpszsu.lastOk = Date.now() - 11 * 1000;
+  assert.equal(poller.pollMs(), 2000);
+  poller.mt.pulls.kpszsu.lastOk = Date.now();
+  poller.mt.client = null;
+  assert.equal(poller.pollMs(), 2000);
+});
+
+test("a post MTProto missed is logged when t.me/s finds it and when MTProto catches up", async () => {
+  const { poller, net } = await baselined({ devices: [MINE] });
+  poller.mt.client = { getHistory: async (channel) => [message(channel, 100, "old")] };
+  await poller.pullAll();
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (line) => warned.push(line);
+  try {
+    net.pages.kpszsu = page("kpszsu", [[100, "old"], [101, "Шахеди на півночі"]]);
+    await poller.tick();
+    poller.mt.client = {
+      getHistory: async (channel) => (channel === "kpszsu"
+        ? [message(channel, 100, "old"), message(channel, 101, "Шахеди на півночі")]
+        : [message(channel, 100, "old")]),
+    };
+    await poller.pullAll();
+  } finally {
+    console.warn = warn;
+  }
+  assert.ok(warned.some((line) => line.startsWith("kpszsu: message 101 first via t.me/s") && line.includes("newest pulled 100")));
+  assert.ok(warned.some((line) => /^kpszsu: message 101 reached pull \d+\.\ds after t\.me\/s$/.test(line)));
+  assert.equal(poller.missed.size, 0);
+});
+
 test("t.me/s is fetched with a timeout", async () => {
   const { net } = await baselined({ devices: [MINE] });
   assert.ok(net.tme.length >= 3);
