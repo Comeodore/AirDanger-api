@@ -334,6 +334,10 @@ SECTOR_REGION = [
     r"\b\w+щин\w*",
 ]
 
+SECTOR_KYIV_GROUP = [
+    r"\b(?:північн|центральн)(?:их|і)\b(?:\s*(?:,|та|і|й)?\s*[а-яіїєґ'-]+(?:их|і)\b)*\s+област\w*",
+]
+
 SECTOR_NORTH = [
     r"\bпівноч\w*",
     r"\bпівніч\w*",
@@ -397,6 +401,7 @@ class DangerService:
         self._future_markers = matcher.compile_patterns(FUTURE_MARKERS)
         self._sector_threat = matcher.compile_patterns(SECTOR_THREAT)
         self._sector_region = matcher.compile_patterns(SECTOR_REGION)
+        self._sector_kyiv_group = matcher.compile_patterns(SECTOR_KYIV_GROUP)
         self._sector_north = matcher.compile_patterns(SECTOR_NORTH)
         self._sector_elsewhere = matcher.compile_patterns(SECTOR_ELSEWHERE)
         self._profile_veto: dict[str, list] = {}
@@ -474,9 +479,11 @@ class DangerService:
     def sector_warning(self, text: str) -> bool:
         if not self._matcher.match_first(self._sector_threat, text):
             return False
-        if geo.elsewhere_target(text) or self._matcher.match_first(
-            self._sector_region, text
-        ):
+        if geo.elsewhere_target(text):
+            return False
+        if self._matcher.match_first(self._sector_kyiv_group, text):
+            return True
+        if self._matcher.match_first(self._sector_region, text):
             return False
         if self._matcher.match_first(self._sector_north, text):
             return True

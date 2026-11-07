@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -241,6 +242,28 @@ async def test_a_warning_vibrates_via_the_silent_sound_without_audio():
     assert aps["alert"]["title"] == "Загроза балістики"
 
 
+async def test_the_comet_turns_purple_in_a_threat_and_a_rocket_in_a_launch_but_not_in_the_feed():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    for text, severity in (
+        ("☄️ Загроза застосування балістичного озброєння з півночі!", "warning"),
+        ("☄ Виходи Курськ\nдалі ☄ на Чернігів", "warning"),
+        ("☄ 6х Балістичних ракет у напрямку Бровари Київ", "inbound"),
+    ):
+        await service.send_detection(
+            [device(TOKEN_A)],
+            DetectedThreat(type="ballistic", text=text, severity=severity), ts,
+        )
+    threat, launch_elsewhere, launch = (r.message for r in requests)
+    assert threat["aps"]["alert"]["title"] == "🟣 Загроза застосування балістичного озброєння з півночі!"
+    assert threat["text"] == "☄️ Загроза застосування балістичного озброєння з півночі!"
+    assert launch_elsewhere["aps"]["alert"] == {"title": "🟣 Виходи Курськ", "body": "далі 🟣 на Чернігів"}
+    assert launch["aps"]["alert"]["title"] == "🚀 6х Балістичних ракет у напрямку Бровари Київ"
+    for message in (threat, launch_elsewhere, launch):
+        assert "☄" not in json.dumps(message["aps"], ensure_ascii=False)
+
+
 async def test_an_inbound_alert_still_sounds():
     service, _ = make_service()
     requests = watch_requests(service)
@@ -469,6 +492,21 @@ async def test_live_activity_start_payload_targets_the_la_topic():
     assert aps["content-state"] == state
     assert aps["timestamp"] == int(ts.timestamp())
     assert aps["stale-date"] == int(ts.timestamp()) + 1800
+
+async def test_live_activity_text_and_banner_swap_the_comet_by_the_episode_severity():
+    service, _ = make_service()
+    requests = watch_requests(service)
+    ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+    warning = {"state": "active", "type": "ballistic", "severity": "warning", "text": "☄ Виходи Курськ"}
+    inbound = {**warning, "severity": "inbound", "text": "☄ Балістика на Київ"}
+    await service.send_live_activity([TOKEN_A], "start", warning, ts)
+    await service.send_live_activity([TOKEN_A], "update", inbound, ts)
+    started, updated = (r.message["aps"] for r in requests)
+    assert started["content-state"]["text"] == "🟣 Виходи Курськ"
+    assert started["alert"]["body"] == "🟣 Виходи Курськ"
+    assert updated["content-state"]["text"] == "🚀 Балістика на Київ"
+    assert warning["text"] == "☄ Виходи Курськ"
+
 
 async def test_live_activity_end_carries_a_dismissal_date():
     service, _ = make_service()

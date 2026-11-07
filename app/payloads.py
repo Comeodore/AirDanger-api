@@ -28,6 +28,10 @@ ALL_CLEAR_TTL_SEC = 300
 
 SENTENCE_END = re.compile(r"(.+?[.!?…])(?:\s|$)")
 
+COMET = re.compile("\u2604\ufe0f?")
+COMET_BY_SEVERITY = {"inbound": "🚀"}
+COMET_DEFAULT = "🟣"
+
 
 @dataclass(frozen=True)
 class Batch:
@@ -52,8 +56,12 @@ def critical_volume(device: dict) -> float:
     return round(min(1.0, max(0.0, float(raw))), 2)
 
 
-def push_alert(text: str, fallback: str) -> dict:
-    lines = [" ".join(line.split()) for line in text.splitlines()]
+def push_safe(text: str, severity: str | None = None) -> str:
+    return COMET.sub(COMET_BY_SEVERITY.get(severity, COMET_DEFAULT), text)
+
+
+def push_alert(text: str, fallback: str, severity: str | None = None) -> dict:
+    lines = [" ".join(line.split()) for line in push_safe(text, severity).splitlines()]
     lines = [line for line in lines if line]
     if not lines:
         return {"title": fallback}
@@ -71,7 +79,7 @@ def detection_batches(
     source: str | None, critical_alerts: bool,
 ) -> list[Batch]:
     type_name = TYPE_NAMES_UK.get(threat.type, "Небезпека")
-    alert = push_alert(threat.text, fallback=f"{type_name} — Київ")
+    alert = push_alert(threat.text, fallback=f"{type_name} — Київ", severity=threat.severity)
     payload = {
         "kind": "detection",
         "type": threat.type,

@@ -21,6 +21,7 @@ from .payloads import (
     all_clear_batch,
     detection_batches,
     first_sentence,
+    push_safe,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +144,11 @@ class PushService:
         attributes: dict | None = None, dismissal_at: datetime | None = None,
         priority: int = 10,
     ) -> int:
+        if "text" in content_state:
+            content_state = {
+                **content_state,
+                "text": push_safe(content_state["text"], content_state.get("severity")),
+            }
         aps: dict = {
             "timestamp": int(ts.timestamp()),
             "event": event,
